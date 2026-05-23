@@ -50,13 +50,14 @@ There are two pieces:
 
 ## Features
 
-- 🧱 **Modeling** — create bones (groups) and cubes, edit/move/reparent/delete them, read the full outliner tree.
-- 🎨 **Texturing** — create textures, paint procedurally (pixels, rects, lines, circles, gradients), apply to faces, set per-face UVs, import/resize, and read a texture back as an image.
+- 🧱 **Modeling** — create bones (groups) and cubes one at a time or **in bulk** (`add_groups` / `add_cubes` build a whole posed skeleton in one call), with full rotation and inflate; edit/move/reparent/delete, and read the outliner tree.
+- 🎨 **Texturing** — create textures, paint procedurally (pixels, rects, lines, circles, **ellipses, polygons, dither, noise**, gradients), **auto-shade every cube face** with `detail_cubes` (no flat or untextured gaps), and place features in **face-relative coordinates** with `paint_faces`.
 - 🎬 **Animation** — create animations, add keyframes in bulk for any bone/channel with interpolation control (linear / catmullrom / step / bezier).
-- 📸 **Vision** — `screenshot` and `get_texture` return the image inline so the model can *see* and iterate.
+- 📸 **Vision** — `screenshot`, **`screenshot_views`** (several angles at once) and `get_texture` return images inline so the model can *see* and iterate, and `check_model` audits for problems.
+- 🧠 **Guidance** — `get_guide` returns a modeling/texturing playbook so the AI builds detailed, rotated models instead of a few flat boxes.
 - 🧩 **Plugins** — search, install (by store id, URL, or file) and uninstall Blockbench plugins, so the AI can set up formats like GeckoLib itself.
 - 🔧 **Escape hatch** — `execute_script` runs arbitrary Blockbench JS for anything not covered by a dedicated tool.
-- 🟢 **33 tools** total, all over a single local connection.
+- 🟢 **40 tools** total, all over a single local connection.
 
 ## Requirements
 
@@ -132,22 +133,25 @@ Point your client at `dist/index.js` over stdio. Use an **absolute path**.
 
 | Group | Tools |
 |-------|-------|
-| **Status** | `get_status`, `list_formats` |
+| **Status & guidance** | `get_status`, `get_guide`, `list_formats` |
 | **Project** | `new_project`, `set_project_meta`, `save_project`, `export_project`, `load_project`, `close_project` |
-| **Geometry** | `add_group`, `add_cube`, `edit_element`, `delete_element`, `list_outliner`, `get_element` |
-| **UV & textures** | `create_texture`, `paint_texture`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `list_textures`, `get_texture` |
+| **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `edit_element`, `delete_element`, `list_outliner`, `get_element`, `check_model` |
+| **UV & textures** | `create_texture`, `paint_texture`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `list_textures`, `get_texture` |
 | **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `list_animations`, `remove_animation` |
-| **View** | `set_camera_angle`, `screenshot` |
+| **View** | `set_camera_angle`, `screenshot`, `screenshot_views` |
 | **Plugins** | `list_plugins`, `install_plugin`, `uninstall_plugin` |
 | **Escape hatch** | `execute_script` |
 
-Conventions: coordinates are **Blockbench units**; rotations are **degrees**; texture pixel ops use a **top-left origin with y pointing down**. `add_cube` returns each face's resolved UV rect, which makes it easy to paint features (eyes, nose, claws) exactly onto the right pixels.
+Conventions: coordinates are **Blockbench units**; rotations are **degrees**; texture pixel ops use a **top-left origin with y pointing down**. `add_cube` returns each face's resolved UV rect; `detail_cubes` then base-coats every face and `paint_faces` lets you paint features (eyes, nose, claws) in coordinates relative to a face, so you don't compute absolute UVs by hand.
 
 ## Example: an animated GeckoLib bear
 
 The sequence an AI follows for *“make a textured GeckoLib bear that can walk, run, sleep and attack”*:
 
 ```jsonc
+// 0. Read the playbook so the model comes out detailed and rotated, not boxy
+get_guide {}
+
 // 1. Install GeckoLib (adds the `geckolib_model` format)
 install_plugin { "id": "geckolib" }
 
@@ -155,38 +159,49 @@ install_plugin { "id": "geckolib" }
 new_project { "format": "geckolib_model", "name": "bear",
               "texture_width": 64, "texture_height": 64 }
 
-// 3. Bones, then cubes parented to them (uv_offset packs box UVs without overlap)
-add_group { "name": "body", "origin": [0, 12, 0] }
-add_cube  { "name": "torso", "from": [-5, 8, -7], "to": [5, 16, 7],
-            "parent": "body", "uv_offset": [0, 0] }
-add_group { "name": "head", "origin": [0, 13, -7], "parent": "body" }
-add_cube  { "name": "head", "from": [-3.5, 10, -13], "to": [3.5, 16, -7],
-            "parent": "head", "uv_offset": [0, 22] }
-// ...legs, ears, muzzle, tail...
-
-// 4. Texture: base fill, then paint detail onto the UV rects add_cube returned
-create_texture { "name": "bear", "width": 64, "height": 64, "fill": "#6e4a2b" }
-paint_texture  { "texture": "bear", "ops": [
-  { "type": "rect", "x": 8,  "y": 30, "width": 1, "height": 1, "color": "#0f0a05" }, // eye
-  { "type": "rect", "x": 27, "y": 36, "width": 4, "height": 3, "color": "#140e08" }  // nose
+// 3. Lay out the whole posed skeleton in one call — note the rotated bones
+add_groups { "groups": [
+  { "name": "body",   "origin": [0, 12, 0] },
+  { "name": "head",   "origin": [0, 14, -7], "parent": "body", "rotation": [10, 0, 0] }, // nose down
+  { "name": "leg_fl", "origin": [3, 8, -5],  "parent": "body", "rotation": [-6, 0, 0] },
+  { "name": "leg_fr", "origin": [-3, 8, -5], "parent": "body", "rotation": [-6, 0, 0] }
+  // ...hind legs, ears, muzzle, tail...
 ] }
-apply_texture  { "texture": "bear" }
 
-// 5. Animate (bulk keyframes, smooth interpolation)
+// 4. Build many cubes at once (segment limbs, taper with inflate, mirror left/right)
+add_cubes { "cubes": [
+  { "name": "torso",   "from": [-5, 8, -7], "to": [5, 16, 7], "parent": "body" },
+  { "name": "head",    "from": [-3.5, 10, -13], "to": [3.5, 16, -7], "parent": "head" },
+  { "name": "muzzle",  "from": [-2, 10, -16], "to": [2, 13, -13], "parent": "head", "inflate": -0.5 }
+  // ...
+] }
+
+// 5. Texture: shaded base coat on EVERY face (no gaps), then features face-relative
+create_texture { "name": "bear", "width": 64, "height": 64, "fill": "#6e4a2b" }
+detail_cubes   { "base": "#6e4a2b", "noise": 0.12, "bottom_dark": 0.3 }
+paint_faces    { "faces": [
+  { "cube": "head",   "face": "north", "ops": [
+    { "type": "rect",    "x": 2, "y": 2, "width": 1, "height": 1, "color": "#0f0a05" }, // eye
+    { "type": "ellipse", "x": 3, "y": 4, "width": 2, "height": 2, "color": "#140e08" }  // nose
+  ] }
+] }
+
+// 6. Animate (bulk keyframes, smooth interpolation)
 create_animation { "name": "animation.bear.walk", "loop": "loop", "length": 1.2 }
 add_keyframes {
   "animation": "animation.bear.walk",
   "keyframes": [
-    { "bone": "leg_front_left", "channel": "rotation", "time": 0.0, "value": [28, 0, 0], "interpolation": "catmullrom" },
-    { "bone": "leg_front_left", "channel": "rotation", "time": 0.6, "value": [-28, 0, 0], "interpolation": "catmullrom" },
-    { "bone": "leg_front_left", "channel": "rotation", "time": 1.2, "value": [28, 0, 0], "interpolation": "catmullrom" }
+    { "bone": "leg_fl", "channel": "rotation", "time": 0.0, "value": [28, 0, 0], "interpolation": "catmullrom" },
+    { "bone": "leg_fl", "channel": "rotation", "time": 0.6, "value": [-28, 0, 0], "interpolation": "catmullrom" },
+    { "bone": "leg_fl", "channel": "rotation", "time": 1.2, "value": [28, 0, 0], "interpolation": "catmullrom" }
   ]
 }
 
-// 6. Look at the result, then refine
-screenshot {}
+// 7. Review from every side + audit, fix what you see, then repeat 4–7
+screenshot_views { "views": ["isometric_right_front", "front", "left", "back"] }
+check_model {}
 
-// 7. Save / export
+// 8. Save / export
 save_project   { "path": "D:/models/bear.bbmodel" }
 export_project { "path": "D:/models/bear.geo.json" }
 ```

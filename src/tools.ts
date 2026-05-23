@@ -60,7 +60,12 @@ export const tools: ToolDef[] = [
   // ===== status & discovery ================================================
   forward(
     "get_status",
-    "Get the current Blockbench state: open project, format, counts of cubes/groups/textures/animations, and edit mode. Call this first to understand the workspace.",
+    "Get the current Blockbench state: open project, format, counts of cubes/groups/textures/animations, and edit mode. Call this first to understand the workspace. If you are about to BUILD or TEXTURE a model, call get_guide first.",
+    obj({})
+  ),
+  forward(
+    "get_guide",
+    "Return the modeling/texturing playbook. READ THIS BEFORE building a creature, character or detailed model — it explains how to use rotation and nested bones for natural shapes, how to break parts into many cubes (not a few flat boxes), and how to texture without leaving flat or untextured faces. Following it produces dramatically better results.",
     obj({})
   ),
   forward(
@@ -118,25 +123,25 @@ export const tools: ToolDef[] = [
   // ===== outliner / geometry ===============================================
   forward(
     "add_group",
-    "Add a group / bone to the outliner. Groups are the bones used for animation. Returns the created group with its uuid.",
+    "Add a group / bone to the outliner. Groups are the bones used for animation AND the way to apply free 3-axis rotation: a cube alone rotates cleanly on only one axis, so to pose a part at a compound angle, put it in a rotated group (nest groups for multi-axis angles). Set `origin` to the real joint so rotation pivots correctly. Returns the created group with its uuid.",
     obj({
       name: { type: "string" },
-      origin: vec3("Pivot point [x,y,z] (the bone's rotation pivot)."),
-      rotation: vec3("Initial rotation in degrees [x,y,z]."),
+      origin: vec3("Pivot point [x,y,z] — put this at the real joint (shoulder/hip/neck)."),
+      rotation: vec3("Initial rotation in degrees [x,y,z]. Use it to pose limbs, snout, ears, tail."),
       parent: { type: "string", description: "uuid or name of the parent group (omit for root)." },
     })
   ),
   forward(
     "add_cube",
-    "Add a cube to the model. Coordinates are in Blockbench units. Returns the created cube with uuid and faces.",
+    "Add a cube to the model. Coordinates are in Blockbench units. Cubes support `rotation` (degrees) and `inflate` (round/shrink without moving) — use them; flat axis-aligned boxes look robotic. For compound multi-axis angles, parent the cube to a rotated group instead. Prefer add_cubes to build many cubes at once. Returns the created cube with uuid and resolved face UVs (paint onto those with paint_faces).",
     obj(
       {
         name: { type: "string" },
         from: vec3("Lower corner [x,y,z]."),
         to: vec3("Upper corner [x,y,z]."),
         origin: vec3("Rotation pivot [x,y,z] (defaults to `from`)."),
-        rotation: vec3("Rotation in degrees [x,y,z]."),
-        inflate: { type: "number", description: "Inflation applied to all faces." },
+        rotation: vec3("Rotation in degrees [x,y,z]. Single-axis is most reliable per cube."),
+        inflate: { type: "number", description: "Inflate (+) or shrink (-) all faces in place — use for rounding/taper." },
         autouv: { type: "number", enum: [0, 1, 2], description: "0 disabled, 1 auto, 2 relative auto." },
         box_uv: { type: "boolean", description: "Use box UV (default follows the format)." },
         uv_offset: { type: "array", items: { type: "number" }, description: "[u,v] offset for box UV." },
@@ -149,6 +154,39 @@ export const tools: ToolDef[] = [
       },
       ["from", "to"]
     )
+  ),
+  forward(
+    "add_groups",
+    "Create many bones/groups in one call — the fast way to lay out a whole skeleton. Pass `groups`: an array of {name, origin, rotation, parent}. A group's `parent` may reference another group created earlier in the SAME call by name, so you can build a nested, pre-posed bone hierarchy at once.",
+    obj(
+      {
+        groups: {
+          type: "array",
+          description: "Array of group specs: {name, origin:[x,y,z], rotation:[x,y,z], parent:name|uuid}.",
+          items: { type: "object" },
+        },
+      },
+      ["groups"]
+    )
+  ),
+  forward(
+    "add_cubes",
+    "Create many cubes in one call — the efficient way to author a detailed model (aim for 20-50+ cubes for a creature, not 6-8). Pass `cubes`: an array where each item takes the same fields as add_cube ({name, from, to, origin, rotation, inflate, parent, box_uv, uv_offset, faces}). Build symmetric parts by emitting both the left side and its mirror (negate X, flip Y/Z rotation signs) in the same array. Returns all created cubes with their face UVs.",
+    obj(
+      {
+        cubes: {
+          type: "array",
+          description: "Array of cube specs (each like add_cube's args).",
+          items: { type: "object" },
+        },
+      },
+      ["cubes"]
+    )
+  ),
+  forward(
+    "check_model",
+    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, and cubes not parented to a bone in animated formats. Run this after building and before/after texturing, then fix what it reports. Returns a grouped issue list.",
+    obj({})
   ),
   forward(
     "edit_element",
@@ -244,7 +282,7 @@ export const tools: ToolDef[] = [
   },
   forward(
     "paint_texture",
-    "Paint directly on a texture with a list of pixel-art drawing operations. This is how you texture a model procedurally. Ops run in order on the texture's canvas (origin top-left, y down).",
+    "Paint directly on a texture with absolute pixel coordinates. Use this for whole-sheet work; for painting onto a specific cube face, paint_faces (face-relative coords) is usually easier. Ops run in order on the canvas (origin top-left, y down).",
     obj(
       {
         texture: { type: "string", description: "uuid or name of the texture to paint." },
@@ -252,15 +290,54 @@ export const tools: ToolDef[] = [
         ops: {
           type: "array",
           description:
-            "Drawing operations. Each op has a `type` and a `color` (CSS color). Types: " +
+            "Drawing operations. Each op has a `type` and (where relevant) a `color` (CSS color). Types: " +
             "pixel{x,y}; rect{x,y,width,height,fill?,line_width?}; line{x1,y1,x2,y2,line_width?}; " +
-            "circle{x,y,radius,fill?,line_width?}; gradient{x1,y1,x2,y2,x,y,width,height,stops:[[offset,color],...]}; " +
+            "circle{x,y,radius,fill?,line_width?}; ellipse{x,y,width,height,fill?,line_width?}; " +
+            "polygon{points:[[x,y],...],fill?,line_width?}; " +
+            "gradient{x1,y1,x2,y2,x,y,width,height,stops:[[offset,color],...]}; " +
+            "dither{x,y,width,height,color,color2?,density?} (pixel pattern — stripes/bandages); " +
+            "noise{x,y,width,height,amount?,color?,mono?} (organic fur/skin texture); " +
             "fill_all{}; clear{x?,y?,width?,height?}.",
           items: { type: "object" },
         },
       },
       ["texture", "ops"]
     )
+  ),
+  forward(
+    "detail_cubes",
+    "One-shot base texturing: assign a texture to the chosen cubes (so NO face is left untextured) and bake a shaded base coat onto every face's UV rect — directional shading (top lighter, underside darker), a soft vertical gradient, darkened edges and subtle noise. This instantly removes the flat/blocky look and the untextured 'gaps'. Run it right after creating the texture, then add features with paint_faces.",
+    obj({
+      cubes: {
+        oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+        description: "'all' (default), a single cube name/uuid, or an array of names/uuids to texture.",
+      },
+      texture: { type: "string", description: "Texture to paint on (defaults to the project's default texture)." },
+      base: { type: "string", description: "Base color, e.g. '#6e4a2b' for brown fur. Default mid-grey." },
+      noise: { type: "number", description: "Noise amount 0..1 (default 0.10). Higher = grainier." },
+      top_light: { type: "number", description: "How much brighter the up-faces are (default 0.22)." },
+      bottom_dark: { type: "number", description: "How much darker the down-faces are (default 0.28)." },
+      edge_darken: { type: "number", description: "Edge shading amount 0..1 (default 0.16)." },
+    })
+  ),
+  forward(
+    "paint_faces",
+    "Paint features onto specific cube faces using coordinates RELATIVE to each face (so [0,0] is that face's top-left corner) — no manual UV math, which is what usually causes misplaced/garbled texture. Use it for eyes, nostrils, mouths, claws, fur tufts, stripes, scars, bandages, armour trim, etc. Either pass one {cube, face, base?, ops?} or a `faces` array of them.",
+    obj({
+      cube: { type: "string", description: "Cube uuid/name (single-face form)." },
+      face: {
+        oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+        description: "Face direction 'north'|'south'|'east'|'west'|'up'|'down', an array of them, or 'all' (single-face form).",
+      },
+      base: { type: "string", description: "Optional solid fill for the face before ops (CSS color)." },
+      ops: { type: "array", description: "Paint ops (same types as paint_texture), coords relative to the face.", items: { type: "object" } },
+      texture: { type: "string", description: "Texture to paint on / assign (defaults to the face's texture or the default)." },
+      faces: {
+        type: "array",
+        description: "Batch form: array of {cube, face, base?, ops?, texture?} items.",
+        items: { type: "object" },
+      },
+    })
   ),
   forward(
     "resize_texture",
@@ -353,6 +430,32 @@ export const tools: ToolDef[] = [
         { type: "text", text: "Preview screenshot:" },
         { type: "image", data: res.base64, mimeType: "image/png" },
       ];
+    },
+  },
+  {
+    name: "screenshot_views",
+    description:
+      "Capture several camera angles in ONE call and return them all as images, so you can see the whole model and catch problems (gaps, wrong rotations, missing detail, asymmetry) from every side. Defaults to iso/front/left/back. This is the main way to review and iterate — do it after each modeling/texturing pass, not just once.",
+    inputSchema: obj({
+      views: {
+        type: "array",
+        description:
+          "Camera views in order. Each item is a preset id string ('front','back','left','right','top','bottom','isometric_right_front','isometric_left_front') or a {position:[x,y,z], target:[x,y,z]} object. Omit for a sensible default set.",
+        items: {},
+      },
+      width: { type: "number" },
+      height: { type: "number" },
+    }),
+    handler: async (args) => {
+      const res: any = await callBlockbench("screenshot_views", args);
+      const blocks: ContentBlock[] = [
+        { type: "text", text: `Captured ${res.count} view(s): ${res.shots.map((s: any) => s.view).join(", ")}` },
+      ];
+      for (const shot of res.shots) {
+        blocks.push({ type: "text", text: `View: ${shot.view}` });
+        blocks.push({ type: "image", data: shot.base64, mimeType: "image/png" });
+      }
+      return blocks;
     },
   },
 

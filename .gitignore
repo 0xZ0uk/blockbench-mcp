@@ -3,3 +3,5 @@ dist/
 .bbtypes/
 *.log
 .DS_Store
+ref/
+models/
