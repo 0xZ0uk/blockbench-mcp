@@ -199,6 +199,10 @@ function serializeTexture(t) {
 		uv_height: t.uv_height,
 		particle: t.particle,
 		render_mode: t.render_mode,
+		render_sides: t.render_sides,
+		frame_count: (() => { try { return t.frameCount; } catch (e) { return undefined; } })(),
+		frame_time: t.frame_time,
+		frame_interpolate: t.frame_interpolate,
 		path: t.path || null,
 	};
 }
@@ -442,53 +446,600 @@ function applyPaintOps(ctx, ops) {
 }
 
 // ---------------------------------------------------------------------------
+// Quality helpers: UV packing, box blur, region colours
+// ---------------------------------------------------------------------------
+
+/** Box-UV footprint of a cube in texture pixels: 2*(w+d) wide, (h+d) tall. */
+function boxUVFootprint(cube) {
+	const w = Math.ceil(Math.abs(cube.to[0] - cube.from[0]) + (cube.inflate ? 0 : 0));
+	const h = Math.ceil(Math.abs(cube.to[1] - cube.from[1]));
+	const d = Math.ceil(Math.abs(cube.to[2] - cube.from[2]));
+	return { w: Math.max(1, 2 * (w + d)), h: Math.max(1, h + d) };
+}
+
+/**
+ * Shelf-pack the box UV of the given cubes so no two share the same pixels.
+ * Sets each cube's uv_offset and recomputes its 6 face UVs. Returns the used
+ * extent so the caller can grow the texture if it overflowed.
+ */
+function packBoxUV(cubes, texW, pad) {
+	pad = pad == null ? 1 : pad;
+	const items = cubes
+		.filter((c) => c instanceof Cube)
+		.map((c) => ({ c, f: boxUVFootprint(c) }))
+		.sort((a, b) => b.f.h - a.f.h); // tallest first packs tighter
+	let x = 0, y = 0, rowH = 0, maxX = 0;
+	for (const it of items) {
+		if (x + it.f.w + pad > texW && x > 0) { x = 0; y += rowH + pad; rowH = 0; }
+		it.c.box_uv = true;
+		it.c.uv_offset = [x, y];
+		if (it.c.mapAutoUV) it.c.mapAutoUV();
+		x += it.f.w + pad;
+		rowH = Math.max(rowH, it.f.h);
+		maxX = Math.max(maxX, x);
+	}
+	return { packed: items.length, used: [maxX, y + rowH] };
+}
+
+/** In-place 3x3 box blur of a texture rect, blended by `amt` (0..1). The "smooth brush". */
+function blurRect(ctx, rx, ry, rw, rh, amt) {
+	if (rw < 2 || rh < 2 || amt <= 0) return;
+	const src = ctx.getImageData(rx, ry, rw, rh);
+	const s = src.data;
+	const out = ctx.createImageData(rw, rh);
+	const d = out.data;
+	for (let y = 0; y < rh; y++) {
+		for (let x = 0; x < rw; x++) {
+			let R = 0, G = 0, B = 0, A = 0, N = 0;
+			for (let dy = -1; dy <= 1; dy++) {
+				for (let dx = -1; dx <= 1; dx++) {
+					const xx = x + dx, yy = y + dy;
+					if (xx < 0 || yy < 0 || xx >= rw || yy >= rh) continue;
+					const i = (yy * rw + xx) * 4;
+					R += s[i]; G += s[i + 1]; B += s[i + 2]; A += s[i + 3]; N++;
+				}
+			}
+			const o = (y * rw + x) * 4;
+			d[o] = clamp8(s[o] * (1 - amt) + (R / N) * amt);
+			d[o + 1] = clamp8(s[o + 1] * (1 - amt) + (G / N) * amt);
+			d[o + 2] = clamp8(s[o + 2] * (1 - amt) + (B / N) * amt);
+			d[o + 3] = clamp8(s[o + 3] * (1 - amt) + (A / N) * amt);
+		}
+	}
+	ctx.putImageData(out, rx, ry);
+}
+
+/**
+ * Pick a base colour for a cube by name. `colorMap` is an array of
+ * { match, color } where `match` is a regex source tested (case-insensitively)
+ * against the cube name; first hit wins, else `base`.
+ */
+function regionColorFor(name, colorMap, base) {
+	if (Array.isArray(colorMap)) {
+		for (const rule of colorMap) {
+			if (!rule || !rule.match || !rule.color) continue;
+			try { if (new RegExp(rule.match, 'i').test(name)) return rule.color; } catch (e) {}
+		}
+	} else if (colorMap && typeof colorMap === 'object') {
+		for (const key in colorMap) {
+			try { if (new RegExp(key, 'i').test(name)) return colorMap[key]; } catch (e) {}
+		}
+	}
+	return base;
+}
+
+// ---------------------------------------------------------------------------
+// VFX texture generation — pixelated flames / energy / crystals / smoke, with
+// optional multi-frame flipbook animation. The look: a bright hot core fading
+// to cool edges in QUANTIZED colour bands (the pixel-art step look), jagged
+// transparent edges, animated by scrolling/flickering value noise per frame.
+// ---------------------------------------------------------------------------
+
+const VFX_PALETTES = {
+	fire:   ['#fff7da', '#ffe24a', '#ff9d2f', '#ff5a1f', '#b81e0c'],
+	ember:  ['#fff0c0', '#ffb43a', '#ff6a1f', '#9c2a0c'],
+	ice:    ['#ffffff', '#dcf4ff', '#8cd8ff', '#3aa6ff', '#1546c8'],
+	frost:  ['#ffffff', '#e2f7ff', '#a6e2ff', '#5fb6ff'],
+	energy: ['#ffffff', '#ccffff', '#5ff0ff', '#22b6ff', '#0a5fd6'],
+	arcane: ['#ffffff', '#f0d0ff', '#c07bff', '#7a1fd0', '#380a66'],
+	poison: ['#f2ffd6', '#b6ff5a', '#46c41e', '#176b12'],
+	shadow: ['#cfa6ff', '#8a4af0', '#4a14a0', '#16052e'],
+	holy:   ['#ffffff', '#fff4c0', '#ffd24a', '#ff9e1f'],
+	smoke:  ['#e8e8e8', '#acacac', '#6c6c6c', '#343434'],
+	blood:  ['#ff7a7a', '#e02020', '#9c0c0c', '#4a0606'],
+	nature: ['#eaffc8', '#9fe05a', '#4faa2e', '#1f6b1a'],
+};
+
+function vfxHash(x, y, seed) {
+	const n = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
+	return n - Math.floor(n);
+}
+function vfxNoise(x, y, seed) {
+	const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+	const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+	const a = vfxHash(xi, yi, seed), b = vfxHash(xi + 1, yi, seed);
+	const c = vfxHash(xi, yi + 1, seed), e = vfxHash(xi + 1, yi + 1, seed);
+	return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + e * u * v;
+}
+function vfxFractal(x, y, seed) {
+	return vfxNoise(x, y, seed) * 0.6 + vfxNoise(x * 2.1, y * 2.1, seed + 5) * 0.3 + vfxNoise(x * 4.3, y * 4.3, seed + 11) * 0.1;
+}
+
+/**
+ * Intensity field for a VFX style at pixel (px,py) in a w x h frame, at phase
+ * t (0..1 across the flipbook) and a noise `seed`. Returns intensity 0..1, or
+ * < 0 for a hard-transparent pixel (outside the shape).
+ */
+function vfxField(style, px, py, w, h, t, seed) {
+	const u = w > 1 ? px / (w - 1) : 0.5;     // 0..1 left->right
+	const v = h > 1 ? py / (h - 1) : 0.5;     // 0..1 top->bottom
+	const xc = (u - 0.5) * 2;                  // -1..1
+	const yc = (v - 0.5) * 2;                  // -1..1
+	const r = Math.hypot(xc, yc);
+	switch (style) {
+		case 'flame': case 'fire': {
+			const sway = (vfxFractal(t * 1.5 + 3, (1 - v) * 3, seed) - 0.5) * (1 - v) * 0.8;
+			const cx = xc - sway;
+			const halfW = 0.16 + v * 0.74;                 // narrow at top, wide at base
+			const body = 1 - Math.abs(cx) / halfW;
+			if (body <= 0) return -1;
+			const turb = vfxFractal(u * 4, (1 - v) * 4 - t * 6, seed);
+			const inten = body * (0.32 + 0.68 * v) * (0.55 + 0.8 * turb);
+			if (inten < 0.2 + (1 - v) * 0.32) return -1;   // erode top into tongues
+			return Math.min(1, inten);
+		}
+		case 'orb': case 'glow': {
+			const inten = 1 - r;
+			return inten <= 0 ? -1 : inten;
+		}
+		case 'energy': case 'plasma': {
+			const ang = Math.atan2(yc, xc);
+			const spikes = vfxFractal(ang / Math.PI * 7 + t * 4, r * 3 + t * 2, seed);
+			const edge = 0.5 + spikes * 0.5;
+			let inten = (edge - r) / edge;
+			inten += Math.max(0, 0.35 - r) * 1.6;          // hot core
+			return inten <= 0.06 ? -1 : Math.min(1, inten);
+		}
+		case 'spark': case 'star': {
+			const ax = Math.abs(xc), ay = Math.abs(yc);
+			const horiz = (1 - ax) * Math.max(0, 1 - ay * 6);
+			const vert = (1 - ay) * Math.max(0, 1 - ax * 6);
+			const diag = Math.max(0, 0.5 - r) * 0.8;
+			const inten = Math.max(horiz, vert) + diag;
+			return inten <= 0.08 ? -1 : Math.min(1, inten);
+		}
+		case 'smoke': case 'cloud': {
+			const cloud = vfxFractal(u * 3 + t * 1.5, v * 3 - t, seed);
+			const inten = cloud * (1 - r * 0.9) * 1.3;
+			return inten <= 0.28 ? -1 : Math.min(1, inten);
+		}
+		case 'trail': case 'streak': {
+			// head bright at the RIGHT (u=1), tapering to the left tail
+			const widen = 0.12 + (1 - u) * 0.5;
+			const line = 1 - Math.abs(yc) / widen;
+			if (line <= 0) return -1;
+			const dash = vfxFractal(u * 6 - t * 5, v * 2, seed);
+			const inten = line * (0.2 + 0.9 * u) * (0.5 + dash);
+			return inten <= 0.16 ? -1 : Math.min(1, inten);
+		}
+		case 'beam': case 'beam_v': {
+			const dx = Math.abs(xc);
+			const flick = 0.7 + vfxFractal(0, v * 5 - t * 6, seed) * 0.6;
+			const inten = (1 - dx / 0.55) * flick;
+			return inten <= 0.12 ? -1 : Math.min(1, inten);
+		}
+		case 'beam_h': {
+			const dy = Math.abs(yc);
+			const flick = 0.7 + vfxFractal(u * 5 - t * 6, 0, seed) * 0.6;
+			const inten = (1 - dy / 0.55) * flick;
+			return inten <= 0.12 ? -1 : Math.min(1, inten);
+		}
+		case 'bolt': case 'lightning': {
+			const path = (vfxFractal(0, v * 6 + t * 4, seed) - 0.5) * 1.1;
+			const dx = Math.abs(xc - path);
+			const inten = 1 - dx / 0.16;
+			return inten <= 0.15 ? -1 : Math.min(1, inten);
+		}
+		case 'rune': case 'ring': {
+			const ringR = 0.7;
+			const d = Math.abs(r - ringR);
+			const inten = 1 - d / 0.18;
+			return inten <= 0.12 ? -1 : Math.min(1, inten);
+		}
+		case 'crystal': case 'gem': {
+			// opaque faceted diamond — for the body of an ice shard / gem
+			const dist = Math.abs(xc) + Math.abs(yc);     // diamond
+			if (dist > 1) return -1;
+			const facet = Math.floor((1 - dist) * 4) / 4;
+			const streak = (vfxFractal(u * 3, v * 4, seed) - 0.5) * 0.18;
+			return Math.max(0, Math.min(1, 0.25 + facet * 0.85 + streak));
+		}
+		case 'shockwave': {
+			const ringR = t * 0.95 + 0.05;
+			const d = Math.abs(r - ringR);
+			const inten = (1 - d / (0.12 + t * 0.1)) * (1 - t * 0.6);
+			return inten <= 0.12 ? -1 : Math.min(1, inten);
+		}
+		default: {
+			const inten = 1 - r;
+			return inten <= 0 ? -1 : inten;
+		}
+	}
+}
+
+const VFX_OPAQUE = { crystal: true, gem: true };
+
+/** Map intensity (1 = hottest core) to a quantized palette colour. */
+function vfxColorAt(palette, inten) {
+	const n = palette.length;
+	let idx = Math.floor((1 - inten) * n);
+	if (idx < 0) idx = 0; else if (idx >= n) idx = n - 1;
+	return parseColor(palette[idx]);
+}
+
+/** Render one VFX frame into an existing ctx at (ox,oy), size w x h. */
+function drawVfxFrame(ctx, ox, oy, w, h, style, palette, t, seed, opaque, softEdge) {
+	const img = ctx.createImageData(w, h);
+	const d = img.data;
+	for (let py = 0; py < h; py++) {
+		for (let px = 0; px < w; px++) {
+			const inten = vfxField(style, px, py, w, h, t, seed);
+			const o = (py * w + px) * 4;
+			if (inten < 0) { d[o + 3] = 0; continue; }
+			const c = vfxColorAt(palette, inten);
+			d[o] = c.r; d[o + 1] = c.g; d[o + 2] = c.b;
+			// Crisp pixel alpha by default; optionally fade the coolest band a little.
+			d[o + 3] = opaque ? 255 : (softEdge && inten < 0.25 ? 150 : 255);
+		}
+	}
+	ctx.putImageData(img, ox, oy);
+}
+
+/**
+ * Build a VFX canvas. With frames>1 it stacks the frames vertically into a
+ * Blockbench flipbook (height = h*frames; Blockbench shows one h-tall frame and
+ * animates through them when TextureAnimator is running).
+ */
+function buildVfxCanvas(w, h, frames, style, palette, seed, softEdge) {
+	const opaque = !!VFX_OPAQUE[style];
+	const c = document.createElement('canvas');
+	c.width = w;
+	c.height = h * Math.max(1, frames);
+	const ctx = c.getContext('2d');
+	ctx.imageSmoothingEnabled = false;
+	for (let i = 0; i < Math.max(1, frames); i++) {
+		const t = frames > 1 ? i / frames : 0;
+		drawVfxFrame(ctx, 0, i * h, w, h, style, palette, t, seed, opaque, softEdge);
+	}
+	return c;
+}
+
+// ---------------------------------------------------------------------------
+// Mesh primitives — non-cuboid geometry (crystals, blades, cones, prisms…) so
+// models aren't limited to axis-aligned boxes. Returns vertices in a [0..w/h/d]
+// box and faces as arrays of vertex indices (3 or 4 per face).
+// ---------------------------------------------------------------------------
+
+function meshPrimitive(shape, w, h, d, segments) {
+	const n = Math.max(3, segments || 8);
+	const verts = [];
+	const faces = [];
+	const V = (x, y, z) => { verts.push([x, y, z]); return verts.length - 1; };
+	const cx = w / 2, cz = d / 2, rx = w / 2, rz = d / 2;
+	switch (shape) {
+		case 'plane': {
+			const a = V(0, 0, 0), b = V(w, 0, 0), c = V(w, h, 0), e = V(0, h, 0);
+			faces.push([a, b, c, e]);
+			break;
+		}
+		case 'pyramid': {
+			const b0 = V(0, 0, 0), b1 = V(w, 0, 0), b2 = V(w, 0, d), b3 = V(0, 0, d);
+			const ap = V(cx, h, cz);
+			faces.push([b3, b2, b1, b0]);                 // base (downward)
+			faces.push([b0, b1, ap], [b1, b2, ap], [b2, b3, ap], [b3, b0, ap]);
+			break;
+		}
+		case 'wedge': case 'prism': {
+			const b0 = V(0, 0, 0), b1 = V(w, 0, 0), b2 = V(w, 0, d), b3 = V(0, 0, d);
+			const t0 = V(0, h, cz), t1 = V(w, h, cz);
+			faces.push([b3, b2, b1, b0]);                 // bottom
+			faces.push([b0, b1, t1, t0]);                 // front slope (z=0)
+			faces.push([b2, b3, t0, t1]);                 // back slope (z=d)
+			faces.push([b0, b3, t0], [b2, b1, t1]);       // triangular end caps (x=0, x=w)
+			break;
+		}
+		case 'octahedron': case 'crystal': case 'gem': case 'shard': case 'diamond': {
+			const my = h * (shape === 'shard' ? 0.4 : 0.5);  // longer top point for a shard
+			const top = V(cx, h, cz), bot = V(cx, 0, cz);
+			const m0 = V(0, my, cz), m1 = V(cx, my, d), m2 = V(w, my, cz), m3 = V(cx, my, 0);
+			faces.push([top, m0, m1], [top, m1, m2], [top, m2, m3], [top, m3, m0]);
+			faces.push([bot, m1, m0], [bot, m2, m1], [bot, m3, m2], [bot, m0, m3]);
+			break;
+		}
+		case 'cone': {
+			const ap = V(cx, h, cz), center = V(cx, 0, cz);
+			const ring = [];
+			for (let i = 0; i < n; i++) {
+				const a = (i / n) * Math.PI * 2;
+				ring.push(V(cx + Math.cos(a) * rx, 0, cz + Math.sin(a) * rz));
+			}
+			for (let i = 0; i < n; i++) {
+				const a = ring[i], b = ring[(i + 1) % n];
+				faces.push([a, b, ap]);
+				faces.push([b, a, center]);
+			}
+			break;
+		}
+		case 'cylinder': {
+			const topC = V(cx, h, cz), botC = V(cx, 0, cz);
+			const top = [], bot = [];
+			for (let i = 0; i < n; i++) {
+				const a = (i / n) * Math.PI * 2;
+				const x = cx + Math.cos(a) * rx, z = cz + Math.sin(a) * rz;
+				top.push(V(x, h, z)); bot.push(V(x, 0, z));
+			}
+			for (let i = 0; i < n; i++) {
+				const j = (i + 1) % n;
+				faces.push([bot[i], bot[j], top[j], top[i]]);  // side
+				faces.push([top[j], top[i], topC]);            // top cap
+				faces.push([bot[i], bot[j], botC]);            // bottom cap
+			}
+			break;
+		}
+		default:
+			throw new Error('Unknown mesh shape: ' + shape + ' (plane|pyramid|wedge|prism|crystal|shard|cone|cylinder)');
+	}
+	return { verts, faces };
+}
+
+/**
+ * Planar-project a mesh face's UVs into a texture rect [x1,y1,x2,y2] (uv units).
+ * Each face fills the rect by mapping its two dominant in-plane axes to u,v —
+ * good enough for solid / gradient VFX skins without manual unwrapping.
+ */
+function setMeshFaceUV(mesh, face, rect) {
+	const vk = face.vertices;
+	const pos = vk.map((k) => mesh.vertices[k]);
+	const e1 = [pos[1][0] - pos[0][0], pos[1][1] - pos[0][1], pos[1][2] - pos[0][2]];
+	const p2 = pos[2] || pos[0];
+	const e2 = [p2[0] - pos[0][0], p2[1] - pos[0][1], p2[2] - pos[0][2]];
+	const nrm = [
+		Math.abs(e1[1] * e2[2] - e1[2] * e2[1]),
+		Math.abs(e1[2] * e2[0] - e1[0] * e2[2]),
+		Math.abs(e1[0] * e2[1] - e1[1] * e2[0]),
+	];
+	let a = 0, b = 1;
+	if (nrm[0] >= nrm[1] && nrm[0] >= nrm[2]) { a = 2; b = 1; }
+	else if (nrm[1] >= nrm[0] && nrm[1] >= nrm[2]) { a = 0; b = 2; }
+	else { a = 0; b = 1; }
+	let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+	pos.forEach((pp) => {
+		minA = Math.min(minA, pp[a]); maxA = Math.max(maxA, pp[a]);
+		minB = Math.min(minB, pp[b]); maxB = Math.max(maxB, pp[b]);
+	});
+	const spanA = (maxA - minA) || 1, spanB = (maxB - minB) || 1;
+	const uv = {};
+	vk.forEach((k, i) => {
+		uv[k] = [
+			rect[0] + ((pos[i][a] - minA) / spanA) * (rect[2] - rect[0]),
+			rect[1] + ((pos[i][b] - minB) / spanB) * (rect[3] - rect[1]),
+		];
+	});
+	face.uv = uv;
+}
+
+// ---------------------------------------------------------------------------
 // Modeling playbook (returned by get_guide / referenced by tool descriptions)
 // ---------------------------------------------------------------------------
 
 const MODELING_GUIDE = [
-	'BLOCKBENCH MODELING PLAYBOOK — read before building a creature/character.',
+	'BLOCKBENCH MODELING PLAYBOOK — read before building any model. Other topics:',
+	'get_guide {topic:"texturing"|"vfx"|"animation"|"reference"} for those workflows.',
 	'',
-	'WORKFLOW (always loop): plan bones -> add_groups -> add_cubes -> create_texture',
-	'-> detail_cubes -> paint_faces -> screenshot_views -> check_model -> fix -> repeat.',
-	'Iterate at least 2-3 times; the first pass is never good enough.',
+	'GOLDEN WORKFLOW (loop it, do not one-shot):',
+	'  get_status -> plan bones & proportions -> add_groups -> add_cubes',
+	'  -> pack_uv -> create_texture -> detail_cubes -> paint_faces',
+	'  -> screenshot_views (incl. the REFERENCE angle) -> check_model -> FIX -> repeat.',
+	'Do at least 2-3 passes. The first pass is NEVER good enough — plan to redo it.',
 	'',
-	'1. PROPORTIONS & PART COUNT. A good creature is 20-50+ cubes, not 6-8 boxes.',
-	'   Break every limb into segments (upper leg / lower leg / paw), give the head a',
-	'   separate snout/muzzle, ears, brow. More, smaller cubes = less blocky.',
+	'1. SILHOUETTE FIRST. Build the grey shape and screenshot it from the reference',
+	'   angle BEFORE texturing. A great texture cannot rescue wrong proportions. Match',
+	'   the reference silhouette: overall stance, head size/position, limb length.',
 	'',
-	'2. ROTATION IS ALLOWED — USE IT. Cubes AND bones take a `rotation:[x,y,z]` in',
-	'   degrees. Flat axis-aligned boxes look like a robot. For natural shapes:',
-	'   - Angle the snout down, ears back, legs splayed, tail curved, jaw open.',
-	'   - A single cube only rotates cleanly on ONE axis (esp. Java format). For a',
-	'     compound 3-axis angle, put the cube in a GROUP and rotate the group, or nest',
-	'     groups (bone rotated on Y, child bone rotated on X). This is exactly how the',
-	'     detailed hand-made models do it: many small bones, each rotated a little.',
-	'   - Build a limb as a bone at the joint origin, rotate the BONE to pose it.',
+	'2. PART COUNT & DETAIL. A good creature is 25-60+ cubes, not 6-8 boxes. Break',
+	'   every limb into segments (upper/lower/foot), give the head a separate snout,',
+	'   ears, brow, jaw. Add secondary forms (claws, teeth, tufts, plates). More,',
+	'   smaller, overlapping parts = less blocky. Use add_cubes in bulk.',
 	'',
-	'3. ROUNDING & TAPER. Use `inflate` (small +/- values) to round or shrink a cube',
-	'   without moving it. Taper a limb by making each segment slightly smaller than',
-	'   the one above. Overlap cubes a little so there are no seams.',
+	'3. ROTATION & TAPER make shapes organic. Cubes AND bones take rotation:[x,y,z].',
+	'   - A single cube rotates cleanly on ONE axis; for a compound angle put it in a',
+	'     GROUP and rotate the group, or nest groups. Build each limb as a bone at the',
+	'     JOINT origin and rotate the bone to pose it.',
+	'   - inflate (small +/-) rounds/shrinks a cube in place. Taper limbs by shrinking',
+	'     each segment.',
+	'   - A cube rotated 45° reads as a crystal/diamond/blade — use this for non-boxy',
+	'     shapes in cube formats. For true non-cuboid shapes use add_mesh.',
 	'',
-	'4. SYMMETRY. Build the left side, then add the mirrored right side in the same',
-	'   add_cubes call: negate X of from/to (swap so from<to) and negate the Y/Z',
-	'   rotation signs. Keep paired bones named *_left / *_right.',
+	'3b. AVOID Z-FIGHTING / CLIPPING (the flickering "two squares inside one another").',
+	'   It happens when two faces sit on the SAME plane at the same depth. Rules:',
+	'   - When two cubes overlap, make one clearly PENETRATE the other (by >=0.1, ideally',
+	'     ~0.5) so no faces are coplanar — never align two faces to the exact same coord.',
+	'   - Decorative pieces (leaves, scales, plates, fur, trim) must NOT sit flush on a',
+	'     surface: push each out by a small UNIQUE amount and stagger neighbours\' depths',
+	'     so no two share a plane. Vary by 0.05-0.2 between adjacent pieces.',
+	'   - Two billboard PLANES must never share the exact same position — offset by >=0.1.',
+	'   - check_model reports `coplanar_overlap` pairs; fix every one by nudging a cube.',
 	'',
-	'5. TEXTURING. Never leave faces flat or untextured.',
-	'   a) create_texture with a mid-tone base fill.',
-	'   b) detail_cubes {base} to give EVERY face a shaded, noisy base coat (kills the',
-	'      flat look and guarantees no untextured gaps). Tune base/noise/top_light.',
-	'   c) paint_faces to add features with FACE-RELATIVE coords: eyes, nose, mouth,',
-	'      claws, fur tufts, stripes, scars, bandages, armour trim. Use ops: rect,',
-	'      ellipse, polygon, line, dither (patterns), noise (texture), gradient.',
-	'   d) Shade by hand too: darker near the belly/underside, lighter on top.',
+	'4. SYMMETRY. Build one side, then mirror_element {axis:"x"} (or emit the mirror in',
+	'   the same add_cubes call: negate X of from/to, swap so from<to, negate Y/Z',
+	'   rotation signs). Keep paired bones named *_left / *_right.',
 	'',
-	'6. REVIEW LOOP. Call screenshot_views (front/side/back/iso) to judge the whole',
-	'   model, and check_model to list untextured faces / bad UVs / unparented cubes.',
-	'   Fix what you see, then screenshot again. Do not stop after one screenshot.',
+	'5. TEXTURE SMOOTH, not flat. pack_uv FIRST (box UV does not auto-pack), then',
+	'   detail_cubes for a smooth shaded base on every face (no gaps), then paint_faces',
+	'   for crisp features. See get_guide {topic:"texturing"}.',
 	'',
-	'For animation formats (GeckoLib/Bedrock): every cube must live under a bone, and',
-	'pivots (group origin) must sit at the real joint so rotation looks right.',
+	'6. REVIEW HONESTLY. screenshot_views every pass; check_model for untextured faces /',
+	'   bad UVs / unparented cubes. If a screenshot looks wrong, FIX it — never call a',
+	'   visible flaw "acceptable" or "close enough". See get_guide {topic:"reference"}.',
+	'',
+	'Animation formats (GeckoLib/Bedrock): every cube must live under a bone; bone',
+	'origins must sit at the real joint. GeckoLib store id "geckolib", format',
+	'"geckolib_model". Meshes do NOT export to GeckoLib/Java — use rotated cubes there.',
 ].join('\n');
+
+const TEXTURING_GUIDE = [
+	'BLOCKBENCH TEXTURING PLAYBOOK — the smooth, Hytale/@volmur look (not dirty/noisy).',
+	'',
+	'ORDER: pack_uv -> create_texture -> detail_cubes (smooth base) -> paint_faces',
+	'(crisp features) -> get_texture to inspect -> fix.',
+	'',
+	'1. PACK UV FIRST. New box-UV cubes all sit at uv_offset [0,0] and share the same',
+	'   pixels. Call pack_uv before painting and again after adding/resizing cubes, or',
+	'   every face paints onto the same spot. It auto-grows the texture if needed.',
+	'',
+	'2. SIZE. 64px for simple, 128px typical, 256px for very detailed. Square.',
+	'',
+	'3. SMOOTH BASE COAT — detail_cubes. It bakes, per face: a soft vertical gradient in',
+	'   the base colour + gentle directional shading (top lighter, underside darker) +',
+	'   a SUBTLE low-contrast mottle, then a 3x3 box blur per UV island (the "smooth',
+	'   brush"). This is the difference between good and bad textures. Tips:',
+	'   - Use the `colors` map to colour regions by cube name, e.g.',
+	'     colors:[{match:"leg|paw",color:"#5a3d22"},{match:"belly",color:"#3a2a18"}].',
+	'     Bodies/limbs are often the SAME tone as the head with darker extremities —',
+	'     do not default everything to one brown.',
+	'   - Keep noise LOW (0.04-0.08). Do NOT raise edge_darken (a dark outline on every',
+	'     face reads as a dirty grid — the look to avoid). streaks:true adds fur/wood/',
+	'     stone grain on top/back faces.',
+	'   - Glow parts (eyes cores, gems, lanterns, runes): name them *_core or *_glow —',
+	'     detail_cubes fills them bright with no shading/blur. Mark the texture emissive',
+	'     with set_texture_render_mode for real in-engine glow.',
+	'',
+	'4. CRISP FEATURES — paint_faces, AFTER the bake (so blur does not soften them).',
+	'   Coords are RELATIVE to each face ([0,0] = its top-left). Eyes are the #1 thing',
+	'   that makes a creature read as alive: dark socket rect, bright iris, 1px hotspot.',
+	'   Also nose, mouth, claws, stripes, scars, armour trim, rune lines. Ops: rect,',
+	'   ellipse, polygon, line, gradient, dither (patterns), noise.',
+	'',
+	'5. INSPECT. get_texture shows the sheet; screenshot_views shows it on the model.',
+	'   Compare to the reference palette. Recolour with detail_cubes `colors` and repeat.',
+].join('\n');
+
+const VFX_GUIDE = [
+	'BLOCKBENCH PIXEL-VFX PLAYBOOK — flames, energy, projectiles, slashes, trails, auras.',
+	'The look: layered emissive PIXEL shapes, a bright hot core fading to cool edges,',
+	'jagged stepped silhouettes, animated. Built from PLANES + emissive textures, posed',
+	'and animated with bones. (Think the homegaddiel magma fire / a glowing ice shard.)',
+	'',
+	'CORE IDEA: a VFX is a few flat 2-sided PLANES carrying transparent emissive pixel',
+	'textures, layered and crossed for volume, then animated (scale/position/rotation/',
+	'flipbook). Bright additive layers stack into a glow.',
+	'',
+	'1. BUILD THE PLANES — add_plane {from,width,height,facing,crossed}. Make a flame/',
+	'   energy sheet as 2-3 stacked planes at slightly different depths, or crossed:true',
+	'   for a volumetric particle. Parent them to a bone so you can animate them.',
+	'   For a solid glowing core (orb, gem, shard) use a small cube or add_mesh',
+	'   {shape:"crystal"|"shard"} (or, in GeckoLib, a cube rotated 45°).',
+	'',
+	'2. MAKE THE TEXTURE — create_vfx_texture {style,preset,frames}. Styles: flame,',
+	'   energy, orb/glow, spark/star, smoke, trail/streak, beam, bolt/lightning, ring,',
+	'   shockwave, crystal. Presets (palettes): fire, ember, ice, frost, energy, arcane,',
+	'   poison, shadow, holy, smoke, blood, nature. It defaults to ADDITIVE (flames/',
+	'   energy) or EMISSIVE (crystals) render mode + 2-sided, so it glows. For a looping',
+	'   animated effect set frames:4-8 — it bakes a vertical flipbook and starts the',
+	'   animation player. Tune speed with frame_time (lower=faster).',
+	'',
+	'3. LAYER FOR DEPTH. Stack a wide dim outer glow + a brighter narrower mid + a small',
+	'   white-hot core (3 planes, additive). Cooler/darker = bigger & behind; hotter =',
+	'   smaller & in front. This is what makes pixel fire/energy look rich, not flat.',
+	'',
+	'4. EMISSIVE/ADDITIVE — set_texture_render_mode {render_mode:"additive"|"emissive",',
+	'   render_sides:"double"}. additive = bright pixels add light & dark vanishes (best',
+	'   for fire/energy on planes); emissive = full-bright, ignores scene light (solid',
+	'   gems/runes). Always render_sides:"double" for planes.',
+	'',
+	'5. ANIMATE (the life of a VFX). Use create_animation + add_keyframes on the planes/',
+	'   bones:',
+	'   - FLICKER: small fast scale Y (1.0->1.15->0.95) + tiny position jitter, looped.',
+	'   - PROJECTILE (ice shard / fireball): a solid core + a TRAIL. Trail = a row of',
+	'     planes/cubes behind the core, each scaling down and fading (scale->0) on a',
+	'     staggered delay so it streaks; or one "trail" plane stretched on the travel',
+	'     axis. The whole group flies via position; spin the core (rotation) for energy.',
+	'   - SLASH: an arc plane that sweeps (rotation) and quickly scales up then fades.',
+	'   - BURST/IMPACT: a shockwave ring (style:"shockwave", or a ring plane scaling out',
+	'     while fading) + outward spark planes.',
+	'   Fade by scaling to 0 (GeckoLib has no opacity channel); flipbook frames also',
+	'   carry motion. Use linear for snappy pops, catmullrom for smooth pulses.',
+	'',
+	'6. REVIEW with screenshot_views from a few angles and against the reference. Check',
+	'   the core reads hottest, edges are jagged pixels (not smooth), and it glows.',
+].join('\n');
+
+const ANIMATION_GUIDE = [
+	'BLOCKBENCH ANIMATION PLAYBOOK (GeckoLib/Bedrock).',
+	'',
+	'SETUP: create_animation {name,loop,length} then add_keyframes (bulk). Each keyframe:',
+	'{bone, channel:"rotation"|"position"|"scale", time, value:[x,y,z], interpolation}.',
+	'catmullrom = smooth; linear = snappy beats (a jaw snap, a slash); step = instant.',
+	'',
+	'ROTATION SIGN (verified): a bone +X rotation tilts its FRONT (-Z side) UP. To point',
+	'a head/snout DOWN you need a NEGATIVE delta. Always preview the pose and confirm:',
+	'  execute_script: anim.select(); Timeline.setTime(t); Animator.preview(); then',
+	'  screenshot_views. Reset before saving: Modes.options.edit.select(); Timeline.setTime(0).',
+	'',
+	'PRINCIPLES: overlap & follow-through (limbs lag the body), anticipation before a',
+	'strike, ease in/out (catmullrom), and a held contact frame on impacts. Keep loops',
+	'seamless: first and last keyframe identical.',
+	'',
+	'QUADRUPED walk (~1s, diagonal gait): FL+BR in phase, opposite FR+BL; upper legs ±25°',
+	'on X; lower legs add a ~22° knee bend offset a quarter cycle; body Y bobs twice;',
+	'slight neck nod & tail sway. Run = faster, bigger swing (±40°), body Y hops — NOT a',
+	'front-pair/back-pair bound (reads as a march).',
+	'',
+	'HUMANOID: idle = small body-Y breathe + sway; walk = arms/legs swing opposite on X',
+	'(left arm with right leg) ±25-35° + body bob; attack = wind one arm back then swing',
+	'through with a torso twist; cast = raise arms, pulse glow *_core bones with scale.',
+	'',
+	'VFX animation: see get_guide {topic:"vfx"} — scale/position pulses, trails that',
+	'scale to 0, spinning cores, sweeping slashes, expanding shockwaves.',
+].join('\n');
+
+const REFERENCE_GUIDE = [
+	'MATCHING A REFERENCE — how to actually hit it, not "almost".',
+	'',
+	'Why models miss the reference: building too few/too boxy parts, skipping the',
+	'silhouette check, and (the big one) RATIONALISING flaws after a screenshot instead',
+	'of fixing them. Beat all three with discipline:',
+	'',
+	'1. READ THE REFERENCE FIRST. List concretely, in words: overall shape/stance;',
+	'   head size & position; number and shape of limbs/appendages; key features (eyes,',
+	'   horns, fins, runes); the colour palette (name ~5 colours); proportions (what is',
+	'   biggest?). Build a part list from this BEFORE touching Blockbench.',
+	'',
+	'2. SILHOUETTE TO THE SAME ANGLE. Screenshot the grey model from the reference',
+	'   camera (screenshot_views with explicit {position,target} if needed) and overlay',
+	'   mentally. NOTE: models usually face -Z, so the "back" preset shows the FACE. Fix',
+	'   shape until the silhouette matches. Only then texture.',
+	'',
+	'3. MATCH THE PALETTE. Pull the actual colours from the reference into detail_cubes',
+	'   `colors` and paint_faces. Wrong hue/saturation is the most obvious miss.',
+	'',
+	'4. CRITICAL SELF-REVIEW EACH PASS — be your own harshest critic. For every',
+	'   screenshot ask: does THIS specifically match the reference? Head too big? Neck',
+	'   too long? Pose wrong? Colour off? Eyes misplaced? Write the differences down and',
+	'   FIX them next pass. Do NOT write "looks great / close enough / acceptable" about',
+	'   something you can see is off — that is the #1 cause of bad results.',
+	'',
+	'5. ITERATE 3-4 PASSES minimum. Compare to the reference, not to your last attempt.',
+	'   Stop only when a side-by-side would convince the user, not just you.',
+].join('\n');
+
+const GUIDES = {
+	modeling: MODELING_GUIDE,
+	texturing: TEXTURING_GUIDE,
+	vfx: VFX_GUIDE,
+	animation: ANIMATION_GUIDE,
+	reference: REFERENCE_GUIDE,
+};
 
 // ---------------------------------------------------------------------------
 // Command handlers
@@ -610,7 +1161,10 @@ const commands = {
 		if (!p.path) throw new Error('path is required');
 		const fs = require('fs');
 		const content = fs.readFileSync(p.path, 'utf-8');
-		Codecs.project.parse(JSON.parse(content), p.path);
+		const data = JSON.parse(content);
+		// Codecs.project.load(model, file) sets up a fresh project from a .bbmodel
+		// (the older .parse signature is what previously failed).
+		Codecs.project.load(data, { path: p.path, content, name: p.path.split(/[\\/]/).pop() });
 		Canvas.updateAll();
 		return commands.get_status().project;
 	},
@@ -718,6 +1272,175 @@ const commands = {
 		return { created: out.length, cubes: out };
 	},
 
+	// Shelf-pack box UVs so every cube gets its own region (box-UV cubes are all
+	// created at uv_offset [0,0] and otherwise share the same pixels). REQUIRED
+	// before texturing a box_uv model, and re-run after adding/resizing cubes.
+	// Grows the texture (preserving any paint) if the layout overflows.
+	pack_uv(p) {
+		requireProject();
+		let cubes;
+		if (!p.cubes || p.cubes === 'all') cubes = Cube.all.slice();
+		else cubes = toList(p.cubes).map(findElement).filter((c) => c instanceof Cube);
+		if (!cubes.length) throw new Error('No cubes to pack.');
+		const pad = p.padding != null ? p.padding | 0 : 1;
+		Undo.initEdit({ elements: cubes, uv_only: true });
+		let res = packBoxUV(cubes, Project.texture_width, pad);
+		if (p.auto_resize !== false && res.used[1] > Project.texture_height) {
+			let newH = Project.texture_height || 16;
+			while (newH < res.used[1]) newH *= 2;
+			const newW = Project.texture_width;
+			Project.texture_height = newH;
+			Texture.all.forEach((t) => {
+				const c = document.createElement('canvas');
+				c.width = newW; c.height = newH;
+				const x = c.getContext('2d'); x.imageSmoothingEnabled = false;
+				if (t.img) { try { x.drawImage(t.img, 0, 0); } catch (e) {} }
+				t.updateSource(c.toDataURL()); t.width = newW; t.height = newH;
+			});
+			res = packBoxUV(cubes, newW, pad);
+			updateProjectResolution && updateProjectResolution();
+		}
+		Undo.finishEdit('MCP: pack UV');
+		Canvas.updateAll();
+		return { packed: res.packed, used: res.used, texture_size: [Project.texture_width, Project.texture_height] };
+	},
+
+	// Create a flat 2-sided plane (billboard) — the building block of pixel VFX:
+	// flames, energy sheets, slashes, motion trails. Implemented as a zero-depth
+	// cube whose two large faces share the texture; set the VFX texture's
+	// render_sides to 'double' so it shows from both sides. `crossed` makes an
+	// X of two perpendicular planes for a volumetric particle look.
+	add_plane(p) {
+		requireProject();
+		const parent = p.parent ? findGroup(p.parent) : null;
+		if (p.parent && !parent) throw new Error('Parent group not found: ' + p.parent);
+		const from = num3(p.from, [0, 0, 0]);
+		const facing = (p.facing || 'z').toLowerCase();
+		const W = p.width != null ? Number(p.width) : 16;
+		const H = p.height != null ? Number(p.height) : 16;
+		const tex = p.texture ? findTexture(p.texture) : (Texture.getDefault ? Texture.getDefault() : Texture.all[0]);
+		const bigFaces = facing === 'x' ? ['east', 'west'] : facing === 'y' ? ['up', 'down'] : ['north', 'south'];
+		const dims = () => {
+			if (facing === 'z') return [from[0] + W, from[1] + H, from[2]];
+			if (facing === 'x') return [from[0], from[1] + H, from[2] + W];
+			return [from[0] + W, from[1], from[2] + H]; // y-facing (flat horizontal): W x H on x/z
+		};
+		const buildOne = (f, t, name, rot) => {
+			const cube = new Cube({
+				name: name || (p.name || 'plane'),
+				from: f, to: t,
+				origin: num3(p.origin, [(f[0] + t[0]) / 2, (f[1] + t[1]) / 2, (f[2] + t[2]) / 2]),
+				rotation: num3(rot || p.rotation, [0, 0, 0]),
+				box_uv: false, autouv: 1,
+			}).init();
+			cube.addTo(parent || 'root');
+			if (tex) {
+				for (const dir in cube.faces) {
+					const face = cube.faces[dir];
+					if (!face) continue;
+					if (bigFaces.indexOf(dir) >= 0) { face.texture = tex.uuid; face.uv = [0, 0, Project.texture_width, Project.texture_height]; }
+					else { face.texture = null; face.uv = [0, 0, 0, 0]; }
+				}
+			}
+			return cube;
+		};
+		Undo.initEdit({ outliner: true, elements: [] });
+		const made = [];
+		const to = dims();
+		made.push(buildOne(from, to, p.name || 'plane'));
+		if (p.crossed) {
+			// second plane perpendicular to the first, same centre
+			const cxv = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2];
+			let f2, t2, big2;
+			if (facing === 'z') { f2 = [cxv[0], from[1], from[2] - W / 2]; t2 = [cxv[0], to[1], from[2] + W / 2]; }
+			else if (facing === 'x') { f2 = [from[0] - W / 2, from[1], cxv[2]]; t2 = [from[0] + W / 2, to[1], cxv[2]]; }
+			else { f2 = [cxv[0], from[1], from[2]]; t2 = [cxv[0], to[1], to[2]]; }
+			const c2 = buildOne(f2, t2, (p.name || 'plane') + '_x');
+			made.push(c2);
+		}
+		Undo.finishEdit('MCP: add plane');
+		Canvas.updateAll();
+		return { created: made.length, planes: made.map(serializeElement) };
+	},
+
+	// Create a non-cuboid MESH primitive (crystal/gem/shard, pyramid, wedge,
+	// cone, cylinder, plane) so models aren't limited to axis-aligned boxes —
+	// great for crystals, blades, horns, teeth, gems and stylised VFX cores.
+	// Requires a mesh-capable format (free/generic/bedrock); GeckoLib/Java export
+	// cubes only, so for those build crystals from rotated cubes instead.
+	add_mesh(p) {
+		requireProject();
+		if (typeof Mesh === 'undefined') throw new Error('Meshes are not available in this Blockbench build.');
+		if (Format && Format.meshes === false) throw new Error('Current format does not support meshes. Use a free/generic project, or build the shape from rotated cubes.');
+		const parent = p.parent ? findGroup(p.parent) : null;
+		if (p.parent && !parent) throw new Error('Parent group not found: ' + p.parent);
+		const shape = (p.shape || 'crystal').toLowerCase();
+		const size = num3(p.size, [8, 8, 8]);
+		const from = num3(p.from, [-size[0] / 2, 0, -size[2] / 2]);
+		const prim = meshPrimitive(shape, size[0], size[1], size[2], p.segments);
+		const tex = p.texture ? findTexture(p.texture) : (Texture.getDefault ? Texture.getDefault() : Texture.all[0]);
+		const uvRect = Array.isArray(p.uv) ? p.uv : [0, 0, Project.texture_width, Project.texture_height];
+		Undo.initEdit({ outliner: true, elements: [] });
+		const mesh = new Mesh({
+			name: p.name || shape,
+			origin: num3(p.origin, [from[0] + size[0] / 2, from[1] + size[1] / 2, from[2] + size[2] / 2]),
+			rotation: num3(p.rotation, [0, 0, 0]),
+		});
+		const keys = prim.verts.map((v) => mesh.addVertices([from[0] + v[0], from[1] + v[1], from[2] + v[2]])[0]);
+		prim.faces.forEach((face) => {
+			const f = new MeshFace(mesh, { vertices: face.map((i) => keys[i]) });
+			if (tex) f.texture = tex.uuid;
+			mesh.addFaces(f);
+			setMeshFaceUV(mesh, f, uvRect);
+		});
+		mesh.init().addTo(parent || 'root');
+		Undo.finishEdit('MCP: add mesh');
+		Canvas.updateAll();
+		return { uuid: mesh.uuid, name: mesh.name, type: 'mesh', shape, vertices: Object.keys(mesh.vertices).length, faces: Object.keys(mesh.faces).length };
+	},
+
+	// Mirror a cube or group across an axis about a pivot (default x=0) — build
+	// one side, then mirror it for perfect symmetry. Returns the clones.
+	mirror_element(p) {
+		requireProject();
+		const axis = ({ x: 0, y: 1, z: 2 })[(p.axis || 'x').toLowerCase()];
+		const pivot = p.pivot != null ? Number(p.pivot) : 0;
+		const targets = (p.elements ? toList(p.elements) : [p.element]).map(findNode).filter(Boolean);
+		if (!targets.length) throw new Error('No element(s) found to mirror.');
+		Undo.initEdit({ outliner: true, elements: [] });
+		const out = [];
+		const reflect = (v) => { const r = v.slice(); r[axis] = 2 * pivot - r[axis]; return r; };
+		const cloneCube = (cube, parent) => {
+			const f = reflect(cube.from), t = reflect(cube.to);
+			const lo = f.slice(), hi = t.slice();
+			if (lo[axis] > hi[axis]) { const tmp = lo[axis]; lo[axis] = hi[axis]; hi[axis] = tmp; }
+			const rot = cube.rotation.slice();
+			// flip the two rotation components not on the mirror axis
+			[0, 1, 2].forEach((i) => { if (i !== axis) rot[i] = -rot[i]; });
+			const c = new Cube({
+				name: cube.name.replace(/left/i, 'right').replace(/_l$/i, '_r') + (/(left|_l$|right|_r$)/i.test(cube.name) ? '' : '_m'),
+				from: lo, to: hi, origin: reflect(cube.origin), rotation: rot,
+				inflate: cube.inflate, box_uv: cube.box_uv, uv_offset: cube.uv_offset ? cube.uv_offset.slice() : undefined,
+			}).init();
+			c.addTo(parent || 'root');
+			for (const dir in cube.faces) { if (c.faces[dir] && cube.faces[dir]) c.faces[dir].texture = cube.faces[dir].texture; }
+			return c;
+		};
+		targets.forEach((el) => {
+			if (el instanceof Group) {
+				const ng = new Group({ name: el.name.replace(/left/i, 'right'), origin: reflect(el.origin), rotation: el.rotation.map((r, i) => i === axis ? r : -r) }).init();
+				ng.addTo(el.parent && el.parent !== 'root' ? el.parent : 'root');
+				el.children.forEach((ch) => { if (ch instanceof Cube) cloneCube(ch, ng); });
+				out.push(serializeGroup(ng));
+			} else if (el instanceof Cube) {
+				out.push(serializeElement(cloneCube(el, el.parent && el.parent !== 'root' ? el.parent : 'root')));
+			}
+		});
+		Undo.finishEdit('MCP: mirror');
+		Canvas.updateAll();
+		return { created: out.length, elements: out };
+	},
+
 	edit_element(p) {
 		requireProject();
 		const el = findNode(p.element || p.uuid || p.name);
@@ -792,6 +1515,39 @@ const commands = {
 			if (animMode && (!cube.parent || cube.parent === 'root'))
 				issues.push({ cube: cube.name, issue: 'no_bone_parent' });
 		});
+
+		// Z-FIGHTING / clipping detection: two faces sharing the same plane and
+		// overlapping in area will flicker (the "two squares inside one another"
+		// texture-clip). We flag unrotated cube pairs that share a min- or max-
+		// plane on an axis AND overlap by real area on the other two axes (their
+		// coplanar faces point the SAME way, so both render and fight). Fix by
+		// offsetting one cube by >=0.1 (or insetting it) so the faces aren't coplanar.
+		const ortho = Cube.all.filter((c) => c.rotation && c.rotation.every((r) => Math.abs(r) < 0.001));
+		const ov = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1);
+		const zEps = 0.02;
+		let zFights = 0;
+		for (let i = 0; i < ortho.length && zFights < 80; i++) {
+			for (let j = i + 1; j < ortho.length && zFights < 80; j++) {
+				const a = ortho[i], b = ortho[j];
+				for (let ax = 0; ax < 3; ax++) {
+					const o1 = (ax + 1) % 3, o2 = (ax + 2) % 3;
+					if (ov(a.from[o1], a.to[o1], b.from[o1], b.to[o1]) <= 0.1) continue;
+					if (ov(a.from[o2], a.to[o2], b.from[o2], b.to[o2]) <= 0.1) continue;
+					const sameMin = Math.abs(a.from[ax] - b.from[ax]) < zEps;
+					const sameMax = Math.abs(a.to[ax] - b.to[ax]) < zEps;
+					if (sameMin || sameMax) {
+						issues.push({
+							issue: 'coplanar_overlap', cubes: [a.name, b.name],
+							axis: ['x', 'y', 'z'][ax], plane: sameMin ? a.from[ax] : a.to[ax],
+							hint: 'faces coplanar -> z-fight; offset one cube by >=0.1 on this axis',
+						});
+						zFights++;
+						break;
+					}
+				}
+			}
+		}
+
 		const byType = {};
 		issues.forEach((i) => { byType[i.issue] = (byType[i.issue] || 0) + 1; });
 		return {
@@ -852,6 +1608,79 @@ const commands = {
 		const tex = new Texture({ name: p.name || 'texture', width, height }).fromDataURL(dataURL).add(false);
 		if (p.particle) tex.enableParticle();
 		Undo.finishEdit('MCP: create texture');
+		// fromDataURL loads the bitmap asynchronously; if a later tool edits the
+		// texture before that load finishes, the canvas is still the default 16x16
+		// and the paint is clipped/corrupted. Wait for the image so the texture is
+		// guaranteed to be the requested size and ready to paint.
+		return new Promise((resolve) => {
+			const finish = () => { tex.width = width; tex.height = height; resolve(serializeTexture(tex)); };
+			if (tex.img && tex.img.complete && tex.img.naturalWidth) return finish();
+			if (tex.img && tex.img.addEventListener) {
+				tex.img.addEventListener('load', finish, { once: true });
+				setTimeout(finish, 400); // safety net
+			} else {
+				finish();
+			}
+		});
+	},
+
+	// Generate a pixelated VFX texture: a bright hot core fading to cool edges in
+	// quantized colour bands with jagged transparent edges. `style` picks the
+	// shape (flame, energy, orb, spark, smoke, trail, beam, bolt, ring,
+	// shockwave, crystal). With frames>1 it bakes a vertical FLIPBOOK and starts
+	// the texture animator so the effect loops. Defaults to an emissive/additive
+	// render mode and 2-sided rendering so it glows on a plane. Use a `preset`
+	// or explicit `palette` to colour it (e.g. energy/ice/fire/arcane/poison).
+	create_vfx_texture(p) {
+		requireProject();
+		const style = (p.style || 'energy').toLowerCase();
+		const w = (p.width | 0) || 16;
+		const h = (p.height | 0) || ((style === 'flame' || style === 'fire' || style === 'beam' || style === 'beam_v') ? 24 : 16);
+		const frames = Math.max(1, (p.frames | 0) || 1);
+		const palette = Array.isArray(p.palette) ? p.palette
+			: (VFX_PALETTES[p.preset] || VFX_PALETTES[style] || VFX_PALETTES.energy);
+		const seed = p.seed != null ? Number(p.seed) : (Math.random() * 1000) | 0;
+		const softEdge = p.soft_edge != null ? !!p.soft_edge : (style === 'orb' || style === 'glow' || style === 'smoke');
+		const canvas = buildVfxCanvas(w, h, frames, style, palette, seed, softEdge);
+		Undo.initEdit({ textures: [] });
+		const tex = new Texture({ name: p.name || (style + '_vfx'), width: w, height: h * frames })
+			.fromDataURL(canvas.toDataURL()).add(false);
+		// One frame tall per UV island so Blockbench counts frames correctly.
+		try { tex.uv_width = w; tex.uv_height = h; } catch (e) {}
+		const rm = p.render_mode || (VFX_OPAQUE[style] ? 'emissive' : 'additive');
+		try { tex.render_mode = rm; } catch (e) {}
+		try { tex.render_sides = p.render_sides || 'double'; } catch (e) {}
+		if (frames > 1) {
+			tex.frame_time = p.frame_time != null ? Number(p.frame_time) : 2;
+			tex.frame_interpolate = !!p.frame_interpolate;
+			tex.frame_order_type = p.frame_order_type || 'loop';
+		}
+		if (p.particle) tex.enableParticle();
+		try { tex.updateMaterial && tex.updateMaterial(); } catch (e) {}
+		if (frames > 1) { try { TextureAnimator.start(); } catch (e) {} }
+		Undo.finishEdit('MCP: create vfx texture');
+		Canvas.updateAll && Canvas.updateAll();
+		return Object.assign(serializeTexture(tex), { style, frames, palette });
+	},
+
+	// Set a texture's render mode (default | emissive | additive | layered |
+	// normal | height | mer), 2-sided rendering, flipbook frame timing, or
+	// particle flag. Use emissive/additive to make VFX (flames/energy/glow) light
+	// up and ignore scene shading; render_sides 'double' shows planes from both
+	// sides. `animate:true` starts the texture-animation player for flipbooks.
+	set_texture_render_mode(p) {
+		requireProject();
+		const tex = findTexture(p.texture);
+		if (!tex) throw new Error('Texture not found: ' + p.texture);
+		if (p.render_mode) tex.render_mode = p.render_mode;
+		if (p.render_sides) tex.render_sides = p.render_sides;
+		if (p.frame_time != null) tex.frame_time = Number(p.frame_time);
+		if (p.frame_interpolate != null) tex.frame_interpolate = !!p.frame_interpolate;
+		if (p.frame_order_type) tex.frame_order_type = p.frame_order_type;
+		if (p.particle === true) tex.enableParticle();
+		try { tex.updateMaterial && tex.updateMaterial(); } catch (e) {}
+		if (p.animate) { try { TextureAnimator.start(); } catch (e) {} }
+		Canvas.updateAll && Canvas.updateAll();
 		return serializeTexture(tex);
 	},
 
@@ -893,10 +1722,15 @@ const commands = {
 		return { painted: true, ops: p.ops.length, texture: serializeTexture(tex) };
 	},
 
-	// High-level: give every face of the chosen cubes a shaded base coat so the
-	// model is never flat or untextured. Assigns `texture` to the faces first
-	// (no gaps), then bakes per-face directional shading + a vertical gradient +
-	// subtle noise onto each face's UV rect. Great starting point before detail.
+	// High-level SMOOTH base coat (the "@volmur / Hytale" look). Assigns the
+	// texture to every chosen face (no untextured gaps), then per face bakes a
+	// soft vertical gradient in the region's base colour + gentle directional
+	// shading (top lighter, underside darker) + a SUBTLE low-contrast mottle,
+	// and finally a 3x3 box blur per UV island (the "smooth brush"). Cubes whose
+	// name matches `glow_regex` are filled bright with no shading/blur so they
+	// read as emissive. NO harsh per-pixel noise and NO dark per-face outline by
+	// default — that is the dirty/blocky look to avoid. Paint crisp features with
+	// paint_faces AFTER this.
 	detail_cubes(p) {
 		requireProject();
 		let tex = p.texture ? findTexture(p.texture) : null;
@@ -910,26 +1744,32 @@ const commands = {
 		if (!cubes.length) throw new Error('No matching cubes.');
 
 		const base = p.base || '#9c9c9c';
-		const noiseAmt = p.noise != null ? Number(p.noise) : 0.10;
-		const topLight = p.top_light != null ? Number(p.top_light) : 0.22;
-		const bottomDark = p.bottom_dark != null ? Number(p.bottom_dark) : 0.28;
-		const edgeDark = p.edge_darken != null ? Number(p.edge_darken) : 0.16;
+		const colors = p.colors || null;                              // region colour map
+		const mottle = p.noise != null ? Number(p.noise) : 0.06;       // subtle, low default
+		const blurAmt = p.blur != null ? Number(p.blur) : 0.55;        // the smooth brush
+		const topLight = p.top_light != null ? Number(p.top_light) : 0.12;
+		const bottomDark = p.bottom_dark != null ? Number(p.bottom_dark) : 0.22;
+		const edgeDark = p.edge_darken != null ? Number(p.edge_darken) : 0; // OFF by default
+		const streaks = !!p.streaks;                                   // fur/grain streaks
+		const glowRe = p.glow_regex ? new RegExp(p.glow_regex, 'i') : /_core$|_glow$/i;
 		const faceMul = {
 			up: 1 + topLight, down: 1 - bottomDark,
-			north: 0.94, south: 1.02, east: 1.06, west: 0.9,
+			north: 0.95, south: 1.0, east: 1.06, west: 0.88,
 		};
 		const scale = tex.width / (Project.texture_width || tex.width);
 
 		const jobs = [];
 		Undo.initEdit({ elements: cubes });
 		cubes.forEach((cube) => {
-			cube.applyTexture(tex, true);
+			const baseCol = regionColorFor(cube.name, colors, base);
+			const glow = glowRe.test(cube.name);
 			for (const dir in cube.faces) {
 				const face = cube.faces[dir];
 				if (!face) continue;
+				face.texture = tex.uuid;
 				const r = faceRect(face, scale);
 				if (r.w <= 0 || r.h <= 0) continue;
-				jobs.push({ r, mul: faceMul[dir] != null ? faceMul[dir] : 1 });
+				jobs.push({ r, dir, base: baseCol, glow, mul: faceMul[dir] != null ? faceMul[dir] : 1 });
 			}
 		});
 		Undo.finishEdit('MCP: assign texture');
@@ -937,36 +1777,56 @@ const commands = {
 		tex.edit((canvas) => {
 			const ctx = canvas.getContext('2d');
 			ctx.imageSmoothingEnabled = false;
-			jobs.forEach(({ r, mul }) => {
-				ctx.fillStyle = shadeHex(base, mul);
-				ctx.fillRect(r.x, r.y, r.w, r.h);
+			// 1) gradient base coat per face
+			jobs.forEach(({ r, base, glow, mul }) => {
 				const g = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
-				g.addColorStop(0, shadeHex(base, mul * 1.08));
-				g.addColorStop(1, shadeHex(base, mul * 0.9));
+				if (glow) {
+					g.addColorStop(0, shadeHex(base, 1.12));
+					g.addColorStop(0.5, shadeHex(base, 1.42));
+					g.addColorStop(1, shadeHex(base, 1.05));
+				} else {
+					g.addColorStop(0, shadeHex(base, mul * 1.1));
+					g.addColorStop(1, shadeHex(base, mul * 0.84));
+				}
 				ctx.fillStyle = g;
-				ctx.globalAlpha = 0.5;
 				ctx.fillRect(r.x, r.y, r.w, r.h);
-				ctx.globalAlpha = 1;
-				if (edgeDark > 0 && r.w > 2 && r.h > 2) {
+				if (edgeDark > 0 && r.w > 2 && r.h > 2 && !glow) {
 					ctx.fillStyle = shadeHex(base, mul * (1 - edgeDark));
 					ctx.fillRect(r.x, r.y, r.w, 1);
 					ctx.fillRect(r.x, r.y + r.h - 1, r.w, 1);
 					ctx.fillRect(r.x, r.y, 1, r.h);
 					ctx.fillRect(r.x + r.w - 1, r.y, 1, r.h);
 				}
-				if (noiseAmt > 0) {
-					const img = ctx.getImageData(r.x, r.y, r.w, r.h);
-					const d = img.data;
-					for (let i = 0; i < d.length; i += 4) {
-						const j = (Math.random() * 2 - 1) * noiseAmt * 255;
-						d[i] = clamp8(d[i] + j); d[i + 1] = clamp8(d[i + 1] + j); d[i + 2] = clamp8(d[i + 2] + j); d[i + 3] = 255;
-					}
-					ctx.putImageData(img, r.x, r.y);
+			});
+			// 2) subtle low-contrast mottle (skip glow)
+			if (mottle > 0) jobs.forEach(({ r, base, glow, mul }) => {
+				if (glow) return;
+				const count = Math.max(1, Math.floor(r.w * r.h * 0.10));
+				for (let i = 0; i < count; i++) {
+					const px = r.x + (Math.random() * r.w | 0);
+					const py = r.y + (Math.random() * r.h | 0);
+					ctx.fillStyle = shadeHex(base, mul * (1 - mottle + Math.random() * mottle * 2));
+					ctx.fillRect(px, py, 1, Math.random() < 0.5 ? 2 : 1);
 				}
 			});
-		}, { edit_name: 'MCP: detail cubes', no_undo: false });
+			// 3) optional grain streaks on top / back faces (fur, wood, stone)
+			if (streaks) jobs.forEach(({ r, dir, base, glow, mul }) => {
+				if (glow || (dir !== 'up' && dir !== 'north')) return;
+				const lines = Math.max(1, Math.floor(r.w / 4));
+				for (let i = 0; i < lines; i++) {
+					const px = r.x + (Math.random() * r.w | 0);
+					ctx.fillStyle = shadeHex(base, mul * (0.78 + Math.random() * 0.12));
+					ctx.fillRect(px, r.y + 1, 1, Math.max(1, r.h - 2));
+				}
+			});
+			// 4) smooth-brush blur per island (skip glow for crisp glow edges)
+			if (blurAmt > 0) jobs.forEach(({ r, glow }) => {
+				if (!glow) blurRect(ctx, r.x, r.y, r.w, r.h, blurAmt);
+			});
+		}, { edit_name: 'MCP: detail cubes (smooth)', no_undo: false });
 
-		return { textured: cubes.length, faces: jobs.length, texture: serializeTexture(tex) };
+		Canvas.updateAll();
+		return { textured: cubes.length, faces: jobs.length, smooth: true, texture: serializeTexture(tex) };
 	},
 
 	// Paint specific cube faces using coordinates RELATIVE to each face's UV
@@ -1192,8 +2052,13 @@ const commands = {
 
 	// A compact playbook the AI can read before building, so models come out
 	// detailed and rotated rather than a few flat axis-aligned boxes.
-	get_guide() {
-		return { guide: MODELING_GUIDE };
+	get_guide(p) {
+		const topic = (p && p.topic ? String(p.topic) : 'modeling').toLowerCase();
+		const guide = GUIDES[topic];
+		if (!guide) {
+			return { topic: 'modeling', guide: MODELING_GUIDE, available_topics: Object.keys(GUIDES) };
+		}
+		return { topic, guide, available_topics: Object.keys(GUIDES) };
 	},
 
 	// ---- plugins ----------------------------------------------------------
@@ -1538,7 +2403,7 @@ Plugin.register(PLUGIN_ID, {
 		'Bridge that lets an AI (via the Model Context Protocol) create models, ' +
 		'textures and animations, take screenshots and install plugins inside Blockbench.',
 	tags: ['AI', 'Automation', 'MCP'],
-	version: '0.1.0',
+	version: '0.2.0',
 	min_version: '4.8.0',
 	variant: 'desktop',
 	onload() {

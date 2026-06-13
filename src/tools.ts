@@ -65,8 +65,14 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "get_guide",
-    "Return the modeling/texturing playbook. READ THIS BEFORE building a creature, character or detailed model — it explains how to use rotation and nested bones for natural shapes, how to break parts into many cubes (not a few flat boxes), and how to texture without leaving flat or untextured faces. Following it produces dramatically better results.",
-    obj({})
+    "Return a playbook. Pass `topic`: 'modeling' (default — proportions, detail, rotation), 'texturing' (the smooth @volmur/Hytale look, no dirty noise), 'vfx' (pixelated flames/energy/projectiles/trails/auras via planes + emissive textures + animation), 'animation' (rigging, gaits, easing), or 'reference' (how to ACTUALLY match a reference image instead of 'almost'). READ the relevant topic BEFORE building/texturing/animating — it dramatically improves results.",
+    obj({
+      topic: {
+        type: "string",
+        enum: ["modeling", "texturing", "vfx", "animation", "reference"],
+        description: "Which playbook to return. Default 'modeling'.",
+      },
+    })
   ),
   forward(
     "list_formats",
@@ -171,7 +177,7 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "add_cubes",
-    "Create many cubes in one call — the efficient way to author a detailed model (aim for 20-50+ cubes for a creature, not 6-8). Pass `cubes`: an array where each item takes the same fields as add_cube ({name, from, to, origin, rotation, inflate, parent, box_uv, uv_offset, faces}). Build symmetric parts by emitting both the left side and its mirror (negate X, flip Y/Z rotation signs) in the same array. Returns all created cubes with their face UVs.",
+    "Create many cubes in one call — the efficient way to author a detailed model (aim for 20-50+ cubes for a creature, not 6-8). Pass `cubes`: an array where each item takes the same fields as add_cube ({name, from, to, origin, rotation, inflate, parent, box_uv, uv_offset, faces}). Build symmetric parts by emitting both the left side and its mirror (negate X, flip Y/Z rotation signs) in the same array. AVOID Z-FIGHTING: when cubes overlap, make one clearly penetrate the other (by >=0.1) and never align two faces to the exact same coordinate; stagger decorative pieces' depths. Returns all created cubes with their face UVs.",
     obj(
       {
         cubes: {
@@ -185,8 +191,71 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "check_model",
-    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, and cubes not parented to a bone in animated formats. Run this after building and before/after texturing, then fix what it reports. Returns a grouped issue list.",
+    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, and Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one another'). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar). Returns a grouped issue list.",
     obj({})
+  ),
+  forward(
+    "pack_uv",
+    "Shelf-pack the box UVs so every cube gets its own region of the texture. REQUIRED before texturing a box_uv model (GeckoLib/Bedrock): newly created cubes all sit at uv_offset [0,0] and otherwise paint onto the same pixels. Re-run after adding or resizing cubes. Auto-grows the texture (preserving paint) if the layout overflows.",
+    obj({
+      cubes: {
+        oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+        description: "'all' (default), or specific cube names/uuids.",
+      },
+      padding: { type: "number", description: "Pixels between UV islands (default 1)." },
+      auto_resize: { type: "boolean", description: "Grow the texture if packing overflows (default true)." },
+    })
+  ),
+  forward(
+    "add_plane",
+    "Create a flat 2-sided plane (billboard) — the building block of pixel VFX (flames, energy sheets, slashes, motion trails) and for thin details (fins, leaves, paper). It is a zero-depth cube whose two large faces carry the texture; pair it with a VFX texture set to render_sides 'double'. `crossed:true` makes an X of two perpendicular planes for a volumetric particle look. Parent it to a bone to animate it.",
+    obj(
+      {
+        name: { type: "string" },
+        from: vec3("Lower corner [x,y,z] (one corner of the plane)."),
+        width: { type: "number", description: "Plane width in units (default 16)." },
+        height: { type: "number", description: "Plane height in units (default 16)." },
+        facing: { type: "string", enum: ["x", "y", "z"], description: "Axis the plane faces (default 'z' = faces ±Z; 'y' = flat horizontal)." },
+        origin: vec3("Rotation pivot (defaults to plane centre)."),
+        rotation: vec3("Rotation in degrees [x,y,z]."),
+        crossed: { type: "boolean", description: "Add a second perpendicular plane (volumetric particle)." },
+        texture: { type: "string", description: "Texture to apply (defaults to the project default)." },
+        parent: { type: "string", description: "uuid or name of the parent bone/group." },
+      },
+      ["from"]
+    )
+  ),
+  forward(
+    "add_mesh",
+    "Create a non-cuboid MESH primitive so models aren't limited to axis-aligned boxes — crystals/gems/shards, pyramids, wedges, cones, cylinders, planes. Great for crystal cores, blades, horns, teeth, gems and stylised VFX. NOTE: meshes need a mesh-capable format (free/generic/bedrock); GeckoLib & Java export cubes only — for those build crystals from cubes rotated 45° instead.",
+    obj(
+      {
+        name: { type: "string" },
+        shape: {
+          type: "string",
+          enum: ["crystal", "gem", "shard", "diamond", "octahedron", "pyramid", "wedge", "prism", "cone", "cylinder", "plane"],
+          description: "Primitive shape (default 'crystal').",
+        },
+        size: vec3("Bounding size [w,h,d] (default [8,8,8]). For a shard make h large."),
+        from: vec3("Lower-corner placement of the bounding box (defaults to centred on x/z at y=0)."),
+        origin: vec3("Rotation pivot (defaults to the shape centre)."),
+        rotation: vec3("Rotation in degrees [x,y,z]."),
+        segments: { type: "number", description: "Radial segments for cone/cylinder (default 8)." },
+        texture: { type: "string", description: "Texture to apply (defaults to the project default)." },
+        uv: { type: "array", items: { type: "number" }, description: "UV rect [x1,y1,x2,y2] every face maps into (defaults to the whole texture)." },
+        parent: { type: "string", description: "uuid or name of the parent bone/group." },
+      }
+    )
+  ),
+  forward(
+    "mirror_element",
+    "Mirror a cube or group (with its children) across an axis about a pivot — build one side of a symmetric model, then mirror it. Flips geometry and the off-axis rotation signs, and renames left<->right. Returns the created clones.",
+    obj({
+      element: { type: "string", description: "uuid or name of the cube/group to mirror (single form)." },
+      elements: { type: "array", items: { type: "string" }, description: "Or a list of uuids/names to mirror." },
+      axis: { type: "string", enum: ["x", "y", "z"], description: "Mirror axis (default 'x')." },
+      pivot: { type: "number", description: "Coordinate on that axis to mirror about (default 0 = centre line)." },
+    })
   ),
   forward(
     "edit_element",
@@ -261,6 +330,48 @@ export const tools: ToolDef[] = [
     })
   ),
   forward(
+    "create_vfx_texture",
+    "Generate a pixelated VFX texture: a bright hot core fading to cool edges in quantized colour bands with jagged transparent edges — the look of pixel flames/energy/projectiles. With frames>1 it bakes a vertical FLIPBOOK and starts the animation player so the effect loops. Defaults to an additive/emissive render mode + 2-sided rendering so it glows on a plane. Apply it to add_plane planes (crossed/layered) and animate with bones. See get_guide topic 'vfx'.",
+    obj({
+      name: { type: "string" },
+      style: {
+        type: "string",
+        enum: ["flame", "fire", "energy", "plasma", "orb", "glow", "spark", "star", "smoke", "cloud", "trail", "streak", "beam", "beam_v", "beam_h", "bolt", "lightning", "ring", "rune", "shockwave", "crystal", "gem"],
+        description: "VFX shape (default 'energy').",
+      },
+      preset: {
+        type: "string",
+        enum: ["fire", "ember", "ice", "frost", "energy", "arcane", "poison", "shadow", "holy", "smoke", "blood", "nature"],
+        description: "Colour palette preset (core->edge). Overridden by `palette`.",
+      },
+      palette: { type: "array", items: { type: "string" }, description: "Explicit colour ramp brightest->coolest, e.g. ['#ffffff','#5ff0ff','#22b6ff','#0a5fd6']." },
+      width: { type: "number", description: "Frame width px (default 16)." },
+      height: { type: "number", description: "Frame height px (default 16, or 24 for flame/beam)." },
+      frames: { type: "number", description: "Flipbook frame count (default 1 = static). 4-8 for a looping animation." },
+      frame_time: { type: "number", description: "Ticks per frame (default 2; lower = faster)." },
+      frame_interpolate: { type: "boolean", description: "Blend between frames (default false for crisp pixels)." },
+      render_mode: { type: "string", description: "'additive' (flames/energy, default) | 'emissive' (solid glow) | 'default' | ..." },
+      render_sides: { type: "string", description: "'double' (default for planes) | 'front' | 'auto'." },
+      seed: { type: "number", description: "Noise seed for repeatable shapes." },
+      soft_edge: { type: "boolean", description: "Fade the coolest band's alpha (default true for orb/glow/smoke)." },
+      particle: { type: "boolean" },
+    })
+  ),
+  forward(
+    "set_texture_render_mode",
+    "Set how a texture renders: render_mode ('default' | 'emissive' = full-bright, ignores light | 'additive' = bright pixels add light & dark vanishes, best for fire/energy on planes | 'layered' | 'normal' | 'height' | 'mer'), render_sides ('auto' | 'front' | 'double' for 2-sided planes), flipbook frame timing, and particle flag. Use this to make VFX glow and to show planes from both sides.",
+    obj({
+      texture: { type: "string", description: "uuid or name of the texture." },
+      render_mode: { type: "string", enum: ["default", "emissive", "additive", "layered", "normal", "height", "mer"] },
+      render_sides: { type: "string", enum: ["auto", "front", "double"] },
+      frame_time: { type: "number", description: "Ticks per flipbook frame (lower = faster)." },
+      frame_interpolate: { type: "boolean" },
+      frame_order_type: { type: "string", enum: ["loop", "backwards", "back_and_forth", "custom"] },
+      particle: { type: "boolean" },
+      animate: { type: "boolean", description: "Start the texture-animation player (for flipbooks)." },
+    }, ["texture"])
+  ),
+  forward(
     "import_texture",
     "Import a texture from an image file on disk (desktop only).",
     obj({ path: { type: "string" }, name: { type: "string" } }, ["path"])
@@ -306,18 +417,26 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "detail_cubes",
-    "One-shot base texturing: assign a texture to the chosen cubes (so NO face is left untextured) and bake a shaded base coat onto every face's UV rect — directional shading (top lighter, underside darker), a soft vertical gradient, darkened edges and subtle noise. This instantly removes the flat/blocky look and the untextured 'gaps'. Run it right after creating the texture, then add features with paint_faces.",
+    "SMOOTH base texturing — the @volmur/Hytale look. Assigns the texture to every chosen face (no untextured 'gaps'), then per face bakes a soft vertical gradient in the region colour + gentle directional shading (top lighter, underside darker) + a SUBTLE low-contrast mottle, and finally a 3x3 box blur per UV island (the 'smooth brush'). Run pack_uv FIRST, then this right after create_texture, then paint_faces for crisp features. Avoids the dirty/noisy/grid look (no hard edge outline, low noise by default). Cubes named *_core/*_glow are filled bright (emissive read).",
     obj({
       cubes: {
         oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
         description: "'all' (default), a single cube name/uuid, or an array of names/uuids to texture.",
       },
       texture: { type: "string", description: "Texture to paint on (defaults to the project's default texture)." },
-      base: { type: "string", description: "Base color, e.g. '#6e4a2b' for brown fur. Default mid-grey." },
-      noise: { type: "number", description: "Noise amount 0..1 (default 0.10). Higher = grainier." },
-      top_light: { type: "number", description: "How much brighter the up-faces are (default 0.22)." },
-      bottom_dark: { type: "number", description: "How much darker the down-faces are (default 0.28)." },
-      edge_darken: { type: "number", description: "Edge shading amount 0..1 (default 0.16)." },
+      base: { type: "string", description: "Default base color, e.g. '#6e4a2b'. Used where no `colors` rule matches." },
+      colors: {
+        type: "array",
+        description: "Region colour map by cube name: [{match:'leg|paw', color:'#5a3d22'}, ...]. `match` is a regex tested case-insensitively against the cube name; first hit wins. The key to matching a reference palette and not making everything one colour.",
+        items: { type: "object" },
+      },
+      noise: { type: "number", description: "Mottle amount 0..1 (default 0.06 — keep it LOW for the smooth look)." },
+      blur: { type: "number", description: "Per-island smooth-brush blur 0..1 (default 0.55). 0 disables." },
+      streaks: { type: "boolean", description: "Add fur/wood/stone grain streaks on top/back faces (default false)." },
+      top_light: { type: "number", description: "How much brighter up-faces are (default 0.12)." },
+      bottom_dark: { type: "number", description: "How much darker down-faces are (default 0.22)." },
+      edge_darken: { type: "number", description: "Edge outline darkening (default 0 = OFF; raising it brings back the dirty-grid look)." },
+      glow_regex: { type: "string", description: "Regex for emissive cube names (default '_core$|_glow$')." },
     })
   ),
   forward(
