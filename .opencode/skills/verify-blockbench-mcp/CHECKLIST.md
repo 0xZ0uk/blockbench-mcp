@@ -12,8 +12,8 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; refreshed per ticket #24 after
-  its rebase run below).
+  passing (tallies grow as cases are added; at ticket #24 post-rebase:
+  73 tests / 0 fail, 97 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
