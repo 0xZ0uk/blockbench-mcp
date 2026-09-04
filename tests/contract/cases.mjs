@@ -570,4 +570,32 @@ export const contractCases = [
     args: { faces: [{ cube: "body", face: "north" }] },
     expect: "ok",
   },
+
+  // ---- ticket #6: measure distance and clearance ----
+  // Distance between two refs, clearance scan (hit/clean via handler tests),
+  // plus schema guards for the new fields.
+  {
+    id: "measure-distance",
+    ticket: "#6",
+    tool: "measure",
+    args: { mode: "distance", a: "slide-a", b: "slide-b" },
+    expect: "ok",
+  },
+  { id: "measure-clearance", ticket: "#6", tool: "measure", args: { mode: "clearance" }, expect: "ok" },
+  {
+    id: "measure-distance-a-type",
+    ticket: "#6",
+    tool: "measure",
+    args: { mode: "distance", a: 123, b: "slide-b" },
+    expect: "error",
+    errorField: "a",
+  },
+  {
+    id: "measure-distance-b-type",
+    ticket: "#6",
+    tool: "measure",
+    args: { mode: "distance", a: "slide-a", b: 123 },
+    expect: "error",
+    errorField: "b",
+  },
 ];

@@ -179,6 +179,88 @@ test("handler result: measure keeps named-axes dims for element, group, and mode
   });
 });
 
+test("handler result: measure distance returns a number with named axes", async () => {
+  const measure = tools.find((t) => t.name === "measure");
+  assert.ok(measure, "measure must exist");
+  const bridgeDistance = {
+    mode: "distance", units: "model",
+    a: { name: "slide-a", uuid: "cube-a", kind: "element" },
+    b: { name: "slide-b", uuid: "cube-b", kind: "element" },
+    a_box: { min: { x: 0, y: 0, z: 0 }, max: { x: 4, y: 2, z: 4 } },
+    b_box: { min: { x: 6, y: 0, z: 0 }, max: { x: 10, y: 2, z: 4 } },
+    gap: { x: 2, y: 0, z: 0 }, delta: { x: 6, y: 0, z: 0 },
+    distance: 2, overlapping: false,
+  };
+  await withFakeBridge({ measure: { result: bridgeDistance } }, async () => {
+    const blocks = await measure.handler({ mode: "distance", a: "slide-a", b: "slide-b" });
+    assert.equal(blocks[0].type, "text");
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.mode, "distance");
+    assert.equal(parsed.units, "model");
+    assert.equal(parsed.distance, 2);
+    assert.deepEqual(parsed.gap, { x: 2, y: 0, z: 0 });
+    assert.deepEqual(Object.keys(parsed.gap).sort(), ["x", "y", "z"]);
+    assert.deepEqual(Object.keys(parsed.delta).sort(), ["x", "y", "z"]);
+    assert.equal(parsed.overlapping, false);
+  });
+});
+
+test("handler result: measure clearance hit echoes epsilon with overlap extent", async () => {
+  const measure = tools.find((t) => t.name === "measure");
+  assert.ok(measure, "measure must exist");
+  const bridgeHit = {
+    mode: "clearance", units: "model",
+    coplanar_epsilon: 0.02, overlap_min: 0.1,
+    scanned_cubes: 2, overlap_count: 1,
+    overlaps: [
+      {
+        cubes: ["slide-a", "slide-b"], axis: "y", plane: 4, gap: 0,
+        overlap: { x: 4, z: 4 },
+        hint: "faces coplanar -> z-fight; offset one cube by >=0.1 on this axis",
+      },
+    ],
+  };
+  await withFakeBridge({ measure: { result: bridgeHit } }, async () => {
+    const blocks = await measure.handler({ mode: "clearance" });
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.overlap_count, 1);
+    assert.equal(parsed.coplanar_epsilon, 0.02);
+    assert.equal(parsed.overlap_min, 0.1);
+    assert.ok(Array.isArray(parsed.overlaps));
+    assert.deepEqual(parsed.overlaps[0].cubes, ["slide-a", "slide-b"]);
+    assert.equal(parsed.overlaps[0].axis, "y");
+    assert.ok(typeof parsed.overlaps[0].overlap === "object");
+  });
+});
+
+test("handler result: measure clearance clean reports zero overlaps", async () => {
+  const measure = tools.find((t) => t.name === "measure");
+  assert.ok(measure, "measure must exist");
+  const bridgeClean = {
+    mode: "clearance", units: "model",
+    coplanar_epsilon: 0.02, overlap_min: 0.1,
+    scanned_cubes: 2, overlap_count: 0, overlaps: [],
+  };
+  await withFakeBridge({ measure: { result: bridgeClean } }, async () => {
+    const blocks = await measure.handler({ mode: "clearance" });
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.overlap_count, 0);
+    assert.deepEqual(parsed.overlaps, []);
+    assert.equal(parsed.coplanar_epsilon, 0.02);
+  });
+});
+
+test("handler result: measure distance/clearance bridge errors name the field", async () => {
+  const measure = tools.find((t) => t.name === "measure");
+  assert.ok(measure, "measure must exist");
+  await withFakeBridge({ measure: { error: 'Field "a" (name|uuid) is required for mode "distance".' } }, async () => {
+    await assert.rejects(() => measure.handler({ mode: "distance", b: "slide-b" }), /a/);
+  });
+  await withFakeBridge({ measure: { error: 'Field "b" not found: nope' } }, async () => {
+    await assert.rejects(() => measure.handler({ mode: "distance", a: "slide-a", b: "nope" }), /nope/);
+  });
+});
+
 test("handler result: measure bridge errors name the offending field", async () => {
   const measure = tools.find((t) => t.name === "measure");
   assert.ok(measure, "measure must exist");

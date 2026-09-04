@@ -419,16 +419,18 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "measure",
-    "Measure verifiable dimensions in model units with named axes (x/y/z). Modes: element (one cube's bounding box — e.g. verify 'slide length = 24'), group (bounding box of a group/bone including all descendant cubes — e.g. slide assembly dims in one call), model (overall model dims, no manual aggregation). Element/group refs are name-or-UUID like get_element. Boxes are the axis-aligned union of cube from/to (rotation is not expanded — matches the viewport's axis readout for unrotated precision parts). Returns {mode, units:'model', min/max/size/center with {x,y,z}} plus the resolved ref and cube_count (group results also list the composed cubes as {name, uuid} so follow-up calls stay addressable). Edge cases: an empty model returns min/max/center null with size {x:0,y:0,z:0} and cube_count 0; a group with no measurable cubes returns a field-named error for \"group\".",
+    "Measure verifiable dimensions in model units with named axes (x/y/z). Modes: element (one cube's bounding box — e.g. verify 'slide length = 24'), group (bounding box of a group/bone including all descendant cubes — e.g. slide assembly dims in one call), model (overall model dims, no manual aggregation), distance (gap between two refs `a`/`b` — e.g. slide-to-frame clearance as a number), clearance (coplanar-overlap scan reusing the check_model audit thresholds, with the epsilon echoed back). Element/group/a/b refs are name-or-UUID like get_element. Boxes are the axis-aligned union of cube from/to (rotation is not expanded — matches the viewport's axis readout for unrotated precision parts). Returns {mode, units:'model', min/max/size/center with {x,y,z}} plus the resolved ref and cube_count (group results also list the composed cubes as {name, uuid} so follow-up calls stay addressable). Distance returns {distance, gap:{x,y,z}, delta:{x,y,z}, overlapping} plus both boxes — `overlapping` is plain interval intersection (touching counts), not the z-fight threshold, so it can disagree with clearance on near-touching pairs by design. Clearance returns {overlaps[], overlap_count, scanned_cubes, coplanar_epsilon, overlap_min} with the same 0.02/0.1 semantics as check_model; like check_model it considers unrotated cubes in local space only (a cube inside a rotated group is still read by its local from/to). Edge cases: an empty model returns min/max/center null with size {x:0,y:0,z:0} and cube_count 0; a group with no measurable cubes returns a field-named error for \"group\".",
     obj(
       {
         mode: {
           type: "string",
-          enum: ["element", "group", "model"],
-          description: "What to measure: 'element' needs `element`, 'group' needs `group`, 'model' needs neither.",
+          enum: ["element", "group", "model", "distance", "clearance"],
+          description: "What to measure: 'element' needs `element`, 'group' needs `group`, 'distance' needs `a`+`b`, 'model'/'clearance' need neither.",
         },
         element: { type: "string", description: "uuid or name of the cube to measure (mode 'element')." },
         group: { type: "string", description: "uuid or name of the group/bone to measure including children (mode 'group')." },
+        a: { type: "string", description: "First ref (name-or-UUID of a cube/group) for mode 'distance'." },
+        b: { type: "string", description: "Second ref (name-or-UUID of a cube/group) for mode 'distance'." },
       },
       ["mode"]
     )

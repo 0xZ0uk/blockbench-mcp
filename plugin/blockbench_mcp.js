@@ -389,6 +389,83 @@ function collectGroupCubes(group) {
 	return out;
 }
 
+/**
+ * Audit thresholds shared by check_model and measure clearance so results
+ * agree: callers own error classification, this owns only the numbers.
+ * COPLANAR_EPS (0.02): two faces are coplanar when their plane coords differ
+ * by less than this. OVERLAP_MIN (0.1): overlap length on BOTH other axes
+ * must exceed this, else the pair is skipped (same 0.1 as the documented
+ * nudge-one-cube fix).
+ */
+const COPLANAR_EPS = 0.02;
+const OVERLAP_MIN = 0.1;
+const AXES = ['x', 'y', 'z'];
+function isUnrotatedCube(c) {
+	return c && c.rotation && c.rotation.every((r) => Math.abs(r) < 0.001);
+}
+function axisOverlap(a1, a2, b1, b2) {
+	return Math.min(a2, b2) - Math.max(a1, b1);
+}
+
+/**
+ * Coplanar-overlap scan over unrotated cubes (the z-fight audit).
+ * Returns [{a, b, axis, plane, gap, overlap:{<o1>:n, <o2>:n}}] capped at 80
+ * pairs, one entry per pair on the first coplanar axis found.
+ */
+function clearanceOverlaps() {
+	const ortho = Cube.all.filter(isUnrotatedCube);
+	const out = [];
+	for (let i = 0; i < ortho.length && out.length < 80; i++) {
+		for (let j = i + 1; j < ortho.length && out.length < 80; j++) {
+			const a = ortho[i], b = ortho[j];
+			for (let ax = 0; ax < 3; ax++) {
+				const o1 = (ax + 1) % 3, o2 = (ax + 2) % 3;
+				const ov1 = axisOverlap(a.from[o1], a.to[o1], b.from[o1], b.to[o1]);
+				if (ov1 <= OVERLAP_MIN) continue;
+				const ov2 = axisOverlap(a.from[o2], a.to[o2], b.from[o2], b.to[o2]);
+				if (ov2 <= OVERLAP_MIN) continue;
+				const gapMin = Math.abs(a.from[ax] - b.from[ax]);
+				const gapMax = Math.abs(a.to[ax] - b.to[ax]);
+				const sameMin = gapMin < COPLANAR_EPS;
+				const sameMax = gapMax < COPLANAR_EPS;
+				if (sameMin || sameMax) {
+					const overlap = {};
+					overlap[AXES[o1]] = ov1;
+					overlap[AXES[o2]] = ov2;
+					out.push({
+						a, b, axis: AXES[ax],
+						plane: sameMin ? a.from[ax] : a.to[ax],
+						gap: sameMin ? gapMin : gapMax,
+						overlap,
+					});
+					break;
+				}
+			}
+		}
+	}
+	return out;
+}
+
+/**
+ * Measurable box for one distance ref (cube OR group incl. children).
+ * Returns {node, kind, box, cubes} or throws a field-named error for `field`.
+ */
+function measurableBox(ref, field) {
+	if (!ref) throw new Error('Field "' + field + '" (name|uuid) is required for mode "distance".');
+	const g = typeof Group !== 'undefined' ? findGroup(ref) : null;
+	if (g) {
+		const cubes = collectGroupCubes(g);
+		if (!cubes.length) throw new Error('Field "' + field + '" has no measurable cubes: ' + ref);
+		const box = bboxOfCubes(cubes);
+		return { node: g, kind: 'group', box, cubes };
+	}
+	const el = findElement(ref);
+	if (!el) throw new Error('Field "' + field + '" not found: ' + ref);
+	if (!Array.isArray(el.from) || !Array.isArray(el.to))
+		throw new Error('Field "' + field + '" has no bounding box: ' + ref);
+	return { node: el, kind: 'element', box: bboxOfCubes([el]), cubes: [el] };
+}
+
 /** Fallback camera placement by angle name when no matching preset exists. */
 function applyAngleName(preview, name) {
 	const { center, size } = sceneBounds();
@@ -1661,12 +1738,13 @@ const commands = {
 
 	// Measure verifiable dimensions in model units with named axes.
 	// Modes: element (one cube), group (group/bone including children),
-	// model (overall dims, no manual aggregation). Boxes are the
-	// axis-aligned union of cube from/to; rotation is not expanded.
+	// model (overall dims, no manual aggregation), distance (gap between two
+	// refs `a`/`b`), clearance (coplanar-overlap scan with audit thresholds).
+	// Boxes are the axis-aligned union of cube from/to; rotation is not expanded.
 	measure(p) {
 		requireProject();
 		const mode = p.mode;
-		if (!mode) throw new Error('Field "mode" is required (element|group|model).');
+		if (!mode) throw new Error('Field "mode" is required (element|group|model|distance|clearance).');
 		if (mode === 'element') {
 			const ref = p.element;
 			if (!ref) throw new Error('Field "element" (name|uuid) is required for mode "element".');
@@ -1714,7 +1792,47 @@ const commands = {
 				box
 			);
 		}
-		throw new Error('Field "mode" must be one of "element", "group", "model" (got ' + JSON.stringify(mode) + ').');
+		if (mode === 'distance') {
+			const ra = measurableBox(p.a, 'a');
+			const rb = measurableBox(p.b, 'b');
+			const axes = ['x', 'y', 'z'];
+			const gap = {}, delta = {};
+			let sumSq = 0;
+			axes.forEach((ax) => {
+				const aMin = ra.box.min[ax], aMax = ra.box.max[ax];
+				const bMin = rb.box.min[ax], bMax = rb.box.max[ax];
+				const g = Math.max(0, Math.max(aMin, bMin) - Math.min(aMax, bMax));
+				gap[ax] = g;
+				sumSq += g * g;
+				delta[ax] = rb.box.center[ax] - ra.box.center[ax];
+			});
+			const overlapping = gap.x === 0 && gap.y === 0 && gap.z === 0;
+			return {
+				mode: 'distance', units: 'model',
+				a: { name: ra.node.name, uuid: ra.node.uuid, kind: ra.kind },
+				b: { name: rb.node.name, uuid: rb.node.uuid, kind: rb.kind },
+				a_box: { min: ra.box.min, max: ra.box.max },
+				b_box: { min: rb.box.min, max: rb.box.max },
+				gap, delta,
+				distance: Math.sqrt(sumSq),
+				overlapping,
+			};
+		}
+		if (mode === 'clearance') {
+			const pairs = clearanceOverlaps();
+			return {
+				mode: 'clearance', units: 'model',
+				coplanar_epsilon: COPLANAR_EPS, overlap_min: OVERLAP_MIN,
+				scanned_cubes: Cube.all.filter(isUnrotatedCube).length,
+				overlap_count: pairs.length,
+				overlaps: pairs.map((e) => ({
+					cubes: [e.a.name, e.b.name],
+					axis: e.axis, plane: e.plane, gap: e.gap, overlap: e.overlap,
+					hint: 'faces coplanar -> z-fight; offset one cube by >=0.1 on this axis',
+				})),
+			};
+		}
+		throw new Error('Field "mode" must be one of "element", "group", "model", "distance", "clearance" (got ' + JSON.stringify(mode) + ').');
 	},
 
 	// Audit the model for common problems that make results look broken: faces
@@ -1750,31 +1868,14 @@ const commands = {
 		// plane on an axis AND overlap by real area on the other two axes (their
 		// coplanar faces point the SAME way, so both render and fight). Fix by
 		// offsetting one cube by >=0.1 (or insetting it) so the faces aren't coplanar.
-		const ortho = Cube.all.filter((c) => c.rotation && c.rotation.every((r) => Math.abs(r) < 0.001));
-		const ov = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1);
-		const zEps = 0.02;
-		let zFights = 0;
-		for (let i = 0; i < ortho.length && zFights < 80; i++) {
-			for (let j = i + 1; j < ortho.length && zFights < 80; j++) {
-				const a = ortho[i], b = ortho[j];
-				for (let ax = 0; ax < 3; ax++) {
-					const o1 = (ax + 1) % 3, o2 = (ax + 2) % 3;
-					if (ov(a.from[o1], a.to[o1], b.from[o1], b.to[o1]) <= 0.1) continue;
-					if (ov(a.from[o2], a.to[o2], b.from[o2], b.to[o2]) <= 0.1) continue;
-					const sameMin = Math.abs(a.from[ax] - b.from[ax]) < zEps;
-					const sameMax = Math.abs(a.to[ax] - b.to[ax]) < zEps;
-					if (sameMin || sameMax) {
-						issues.push({
-							issue: 'coplanar_overlap', cubes: [a.name, b.name],
-							axis: ['x', 'y', 'z'][ax], plane: sameMin ? a.from[ax] : a.to[ax],
-							hint: 'faces coplanar -> z-fight; offset one cube by >=0.1 on this axis',
-						});
-						zFights++;
-						break;
-					}
-				}
-			}
-		}
+		// Shared scan with measure clearance (same COPLANAR_EPS/OVERLAP_MIN).
+		clearanceOverlaps().forEach((e) => {
+			issues.push({
+				issue: 'coplanar_overlap', cubes: [e.a.name, e.b.name],
+				axis: e.axis, plane: e.plane,
+				hint: 'faces coplanar -> z-fight; offset one cube by >=0.1 on this axis',
+			});
+		});
 
 		const byType = {};
 		issues.forEach((i) => { byType[i.issue] = (byType[i.issue] || 0) + 1; });
