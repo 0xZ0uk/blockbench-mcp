@@ -8,38 +8,28 @@ Blockbench with the full API. Adapt names/colours, then run. Wrap every mutation
 
 The server ships a first-class `pack_uv` tool: it shelf-packs all cubes (or a `scope` subset),
 recomputes face UVs, and auto-grows the texture if the layout overflows. **Call it after every
-batch of `add_cubes` / resize. Re-run after decoration passes too.**
+batch of `add_cubes` or resize. Re-run after decoration passes too.**
 
-Only if the tool is unavailable or you need custom behaviour, fall back to the script:
-
-```js
-const TW = Project.texture_width, pad = 1;
-const items = Cube.all.map(c => {
-  const w=Math.ceil(Math.abs(c.to[0]-c.from[0])),
-        h=Math.ceil(Math.abs(c.to[1]-c.from[1])),
-        d=Math.ceil(Math.abs(c.to[2]-c.from[2]));
-  return { c, fw: 2*(w+d), fh: (h+d) };           // box-UV footprint
-}).sort((a,b)=> b.fh-a.fh);                         // tallest first = tighter packing
-Undo.initEdit({ elements: Cube.all, uv_only: true });
-let x=0,y=0,rowH=0,maxX=0;
-for (const it of items){
-  if (x+it.fw+pad > TW){ x=0; y+=rowH+pad; rowH=0; }
-  it.c.box_uv = true; it.c.uv_offset = [x,y];
-  if (it.c.mapAutoUV) it.c.mapAutoUV();             // recompute the 6 face UVs from uv_offset
-  x += it.fw+pad; rowH = Math.max(rowH, it.fh); maxX = Math.max(maxX, x);
+```jsonc
+pack_uv {
+  "padding": 1,
+  "auto_resize": true
 }
-Undo.finishEdit('pack uv'); Canvas.updateAll();
-return { packed: items.length, used: [maxX, y+rowH], tex: [TW, Project.texture_height] };
 ```
 
+Narrow to a subset with scope plus an elements array; tune spacing with padding. (The retired
+`execute_script` body this replaces is intentionally not kept here — one seam: the tool is the
+recipe now.)
+
 Footprint math: a cube of size (w,h,d) unwraps to `2*(w+d)` wide and `(h+d)` tall, in texture
-pixels (1 unit = 1 px when `uv_width == texture_width`). NOTE: mesh primitives don't use box UV —
-give them a `uv` rect at creation, or UV them via `set_cube_uv`/script.
+pixels (1 unit = 1 px when the UV width equals the texture width). NOTE: mesh primitives don't
+use box UV — give them a `uv` rect at creation, or UV them via `set_cube_uv`.
 
 ## 2. Procedural decoration (leaves / scales / fur tufts / cloaks)
 
 Generate many small decorative cubes around a body. KEEP CLIPPING LOW: few overlaps + stagger
-each piece's outer depth so faces don't z-fight.
+each piece's outer depth so faces don't z-fight. No native tool covers scatter generation, so
+the script stays.
 
 ```js
 const body=Group.all.find(g=>g.name==='body');
@@ -53,23 +43,26 @@ Undo.finishEdit('decorate'); Canvas.updateAll();
 return {added:made.length};
 ```
 
-Anti-clip checklist: step ≈ width (small overlap only), unique outer depth per piece, don't stack
-two pieces at identical x,y,z. **Re-run `pack_uv` and the `smooth_bake` tool after decorating.**
+Anti-clip checklist: step about one width (small overlap only), unique outer depth per piece,
+don't stack two pieces at identical x,y,z. **Re-run `pack_uv` and the `smooth_bake` tool after
+decorating.**
 
-## 3. Quick symmetry / geometry sanity probe
+## 3. Geometry sanity — use `query_elements`, `measure`, and `check_model` instead
 
-Fast readouts to sanity-check a build without screenshots:
+The server ships first-class native tools for everything the old sanity-probe script
+hand-rolled, so the probe body is intentionally not kept here — one seam: the tools are the
+recipe now.
 
-```js
-const cubes = Cube.all;
-const b = cubes.reduce((a,c)=>a.map((v,i)=>Math.min(v,c.from[i])),[1e9,1e9,1e9])
-  .map((v,i)=>Math.min(v,cubes.reduce((a,c)=>Math.min(a,c.to[i]),1e9)));
-return {
-  cubes: cubes.length, meshes: typeof Mesh!=='undefined' ? Mesh.all.length : 0,
-  groups: Group.all.length,
-  unparented: cubes.filter(c=>!c.parent||c.parent==='root').map(c=>c.name),
-  bounds: b
-};
-```
+- Counts: `get_status` reports cube, group, texture, and animation counts plus the open
+  project and format — the headliner numbers with no script.
+- Locate offenders: `query_elements` finds cubes or groups by name pattern or direct-parent
+  group with honest paging, returning refs usable verbatim in `get_element`,
+  `edit_elements`, and `measure`. Never lead with a `list_outliner` dump on a large model.
+- Verify size: `measure` in element, group, or whole-model mode returns the bounding box with
+  named axes — check it against the written plan's ratios. Distance and clearance modes cover
+  gaps and coplanar-overlap scans.
+- Verify correctness: `check_model` audits untextured faces, bad UVs, degenerate sizes,
+  unparented cubes, and coplanar overlap, attaching fix patches that feed `edit_element`,
+  `edit_elements`, or `set_cube_uv` directly.
 
-Feed anything suspicious straight into `check_model`.
+Feed anything suspicious straight into the Phase 6 fix loop in SKILL.md.
