@@ -222,7 +222,7 @@ Human-checkable (screenshots):
 
 # Worked Example
 
-`LOOK-PS1.md` (PS1 Look) next to this file: 64/128px point-filtered textures, ≤16 colors,
+`LOOK-PS1.md` (PS1 Look) in this folder: 64/128px point-filtered textures, ≤16 colors,
 300/1200 tri budgets, flat shading, grid snap, dithering mandated, smooth-bake banned,
 reviewed on dark backgrounds. Built by following the creation workflow above from the
 low-poly texture research (gradient-atlas vs pixel-texture vs flat-color discipline).
