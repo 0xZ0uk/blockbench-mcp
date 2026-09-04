@@ -137,6 +137,8 @@ export const TOOL_WORD_ALLOWLIST = new Set(
 export const PATH_ALLOWLIST = new Set([]);
 
 const REPO_ROOTS = new Set(["skills", "plugin", "src", "dist", "docs", "tests"]);
+/** Bare repo-rooted path tokens, compiled from REPO_ROOTS so the two stay coupled. */
+const BARE_PATH_RE = new RegExp(`\\b((?:${[...REPO_ROOTS].join("|")})\\/[A-Za-z0-9_.\\-/]*[A-Za-z0-9_.\\-/])`, "g");
 const SCRIPT_EXTS = [".mjs", ".js", ".zip"];
 const TOOL_PREFIXES = ["mcp__blockbench__", "blockbench_"];
 
@@ -233,10 +235,8 @@ export function extractPathMentions(text) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\s*```/.test(line)) {
-      // Fences carry no link destinations, but bare `dist/...` tokens in
-      // json examples still count — fall through to the bare scan below.
-    }
+    // Fences carry no link destinations, but bare `dist/...` tokens in
+    // json examples still count — the bare scan below runs inside fences too.
     // Markdown link destinations: `[text](dest)`.
     for (const m of line.matchAll(/\]\(([^)\s]+)\)/g)) {
       const dest = m[1].trim();
@@ -254,7 +254,7 @@ export function extractPathMentions(text) {
       if (raw.includes("/") ? isRooted : isScript) push(raw, i + 1);
     }
     // Bare repo-rooted tokens in prose and fenced examples.
-    for (const m of line.matchAll(/\b((?:skills|plugin|src|dist|docs|tests)\/[A-Za-z0-9_.\-/]*[A-Za-z0-9_.\-/])/g)) {
+    for (const m of line.matchAll(BARE_PATH_RE)) {
       push(m[1], i + 1);
     }
   }

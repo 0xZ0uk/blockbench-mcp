@@ -191,3 +191,21 @@ test("docs: README tool count matches the published registry", () => {
     `README claims ${claims[0]} tools but the registry serves ${registry.length} — update the count with the tool change`
   );
 });
+
+test("docs: README tool reference table lists the whole registry", () => {
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+  const section = readme.split("## Tool reference")[1].split(/^## /m)[0];
+  assert.ok(section, "README must keep a ## Tool reference section");
+  const inTable = new Set(
+    [...section.matchAll(/`([a-z][a-z0-9_]*)`/g)]
+      .map((m) => m[1])
+      .filter((w) => registry.includes(w))
+  );
+  const missing = registry.filter((t) => !inTable.has(t));
+  assert.deepEqual(
+    missing,
+    [],
+    `tool reference table omits registry tools: ${missing} — add a row with the tool change`
+  );
+  assert.equal(inTable.size, registry.length);
+});
