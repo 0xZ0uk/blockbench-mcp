@@ -3009,7 +3009,7 @@ const commands = {
 		};
 		const joinDir = (dir, file) => String(dir).replace(/[\\/]+$/, '') + '/' + file;
 		const defaultDir = () => {
-			const sp = Project.save_path || Project.path || null;
+			const sp = Project.save_path || null;
 			if (!sp) {
 				throw new Error('Field "path" (or "directory") is required until the project is saved: save the project first or pass an explicit destination.');
 			}
