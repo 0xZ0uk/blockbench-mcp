@@ -281,6 +281,71 @@ test("handler result: scope+elements forward to the bridge unchanged", async () 
   });
 });
 
+test("handler result: screenshot_views keeps blueprint metadata and restore flag", async () => {
+  const shot = tools.find((t) => t.name === "screenshot_views");
+  assert.ok(shot, "screenshot_views must exist");
+  const bridgeResult = {
+    count: 2,
+    projection_restored: true,
+    shots: [
+      { view: "front", base64: "AAA", ortho: true, px_per_unit: 8, wireframe: false, projection_restored: true },
+      { view: "top", base64: "BBB", ortho: true, px_per_unit: 8, wireframe: true, projection_restored: true },
+    ],
+  };
+  await withFakeBridge({ screenshot_views: { result: bridgeResult } }, async () => {
+    const blocks = await shot.handler({ views: ["front", "top"], ortho: true, px_per_unit: 8 });
+    assert.equal(blocks[0].type, "text");
+    assert.match(blocks[0].text, /Captured 2 view\(s\): front, top/);
+    assert.match(blocks[0].text, /projection restored/);
+    const viewLines = blocks.filter((b) => b.type === "text" && b.text.startsWith("View:")).map((b) => b.text);
+    assert.deepEqual(viewLines, ["View: front (ortho, 8 px/unit)", "View: top (ortho, 8 px/unit, wireframe)"]);
+    const images = blocks.filter((b) => b.type === "image");
+    assert.equal(images.length, 2);
+    assert.deepEqual(images.map((b) => b.data), ["AAA", "BBB"]);
+  });
+});
+
+test("handler result: screenshot_views warns when projection was not restored", async () => {
+  const shot = tools.find((t) => t.name === "screenshot_views");
+  assert.ok(shot, "screenshot_views must exist");
+  const bridgeResult = {
+    count: 1,
+    projection_restored: false,
+    shots: [
+      { view: "front", base64: "AAA", ortho: true, px_per_unit: 8, wireframe: false, projection_restored: false },
+    ],
+  };
+  await withFakeBridge({ screenshot_views: { result: bridgeResult } }, async () => {
+    const blocks = await shot.handler({ views: ["front"], ortho: true, px_per_unit: 8 });
+    assert.match(blocks[0].text, /WARNING: projection NOT restored/);
+    assert.deepEqual(
+      blocks.filter((b) => b.type === "text" && b.text.startsWith("View:")).map((b) => b.text),
+      ["View: front (ortho, 8 px/unit)"]
+    );
+  });
+});
+
+test("handler result: screenshot_views keeps legacy text for plain shots", async () => {
+  const shot = tools.find((t) => t.name === "screenshot_views");
+  assert.ok(shot, "screenshot_views must exist");
+  // Older plugin builds omit blueprint fields; legacy lines stay flag-free.
+  const bridgeResult = {
+    count: 2,
+    shots: [
+      { view: "front", base64: "AAA" },
+      { view: "custom", base64: "BBB" },
+    ],
+  };
+  await withFakeBridge({ screenshot_views: { result: bridgeResult } }, async () => {
+    const blocks = await shot.handler({ views: ["front"] });
+    assert.match(blocks[0].text, /Captured 2 view\(s\): front, custom \(projection restored\)/);
+    assert.deepEqual(
+      blocks.filter((b) => b.type === "text" && b.text.startsWith("View:")).map((b) => b.text),
+      ["View: front", "View: custom"]
+    );
+  });
+});
+
 /**
  * Stub the bridge transport (global fetch) so handlers return canned
  * results without a live Blockbench. Restores the real fetch afterwards.

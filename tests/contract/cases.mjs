@@ -598,4 +598,51 @@ export const contractCases = [
     expect: "error",
     errorField: "b",
   },
+
+  // ---- ticket #7: blueprint orthographic screenshots ----
+  // Ortho side/front/top captures per call or per view; camera semantics unchanged.
+  { id: "screenshot-views-default", ticket: "#7", tool: "screenshot_views", args: {}, expect: "ok" },
+  {
+    id: "screenshot-views-blueprint-call",
+    ticket: "#7",
+    tool: "screenshot_views",
+    args: { views: ["front", "top"], ortho: true, px_per_unit: 8, wireframe: false },
+    expect: "ok",
+  },
+  {
+    id: "screenshot-views-blueprint-per-view",
+    ticket: "#7",
+    tool: "screenshot_views",
+    args: {
+      views: [
+        { view: "front", ortho: true, px_per_unit: 8 },
+        { view: { position: [0, 8, 32], target: [0, 8, 0] }, wireframe: true },
+      ],
+    },
+    expect: "ok",
+  },
+  {
+    id: "screenshot-views-ortho-type",
+    ticket: "#7",
+    tool: "screenshot_views",
+    args: { views: ["front"], ortho: "yes" },
+    expect: "error",
+    errorField: "ortho",
+  },
+  {
+    id: "screenshot-views-px-type",
+    ticket: "#7",
+    tool: "screenshot_views",
+    args: { views: ["front"], px_per_unit: "8" },
+    expect: "error",
+    errorField: "px_per_unit",
+  },
+  {
+    id: "screenshot-views-wireframe-type",
+    ticket: "#7",
+    tool: "screenshot_views",
+    args: { views: ["front"], wireframe: "yes" },
+    expect: "error",
+    errorField: "wireframe",
+  },
 ];

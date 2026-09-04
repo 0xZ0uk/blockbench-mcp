@@ -704,19 +704,46 @@ export const tools: ToolDef[] = [
       views: {
         type: "array",
         description:
-          "Camera views in order. Each item is a preset id string ('front','back','left','right','top','bottom','isometric_right_front','isometric_left_front') or a {position:[x,y,z], target:[x,y,z]} object. Omit for a sensible default set.",
+          "Camera views in order. Each item is a preset id string ('front','back','left','right','top','bottom','isometric_right_front','isometric_left_front'), a {position:[x,y,z], target:[x,y,z]} object, or a blueprint object {view: <preset|string|{position,target}>, ortho?: boolean, px_per_unit?: number, wireframe?: boolean} for measurable orthographic captures. Omit for a sensible default set.",
         items: {},
       },
       width: { type: "number" },
       height: { type: "number" },
+      ortho: {
+        type: "boolean",
+        description:
+          "Blueprint mode: pin orthographic projection for every shot (per-view `ortho` overrides). Restored afterward.",
+      },
+      px_per_unit: {
+        type: "number",
+        description:
+          "Blueprint scale guarantee: positive pixels per model unit for every shot (per-view `px_per_unit` overrides). Requesting a scale pins ortho unless the view opts out; same model + same value yields the same pixel extents.",
+      },
+      wireframe: {
+        type: "boolean",
+        description:
+          "Blueprint overlay: render wireframe for every shot so hidden edges and coplanar faces show without rotating (per-view `wireframe` overrides). Restored afterward.",
+      },
     }),
     handler: async (args) => {
       const res: any = await callBlockbench("screenshot_views", args);
+      const restored = res.shots?.every?.((s: any) => s.projection_restored !== false);
       const blocks: ContentBlock[] = [
-        { type: "text", text: `Captured ${res.count} view(s): ${res.shots.map((s: any) => s.view).join(", ")}` },
+        {
+          type: "text",
+          text: `Captured ${res.count} view(s): ${res.shots.map((s: any) => s.view).join(", ")}${restored ? " (projection restored)" : " (WARNING: projection NOT restored)"}`,
+        },
       ];
       for (const shot of res.shots) {
-        blocks.push({ type: "text", text: `View: ${shot.view}` });
+        const flags = [
+          shot.ortho ? "ortho" : null,
+          typeof shot.px_per_unit === "number" ? `${shot.px_per_unit} px/unit` : null,
+          shot.wireframe ? "wireframe" : null,
+        ].filter(Boolean);
+        blocks.push({
+          type: "text",
+          text: `View: ${shot.view}${flags.length ? ` (${flags.join(", ")})` : ""}`,
+        });
         blocks.push({ type: "image", data: shot.base64, mimeType: "image/png" });
       }
       return blocks;

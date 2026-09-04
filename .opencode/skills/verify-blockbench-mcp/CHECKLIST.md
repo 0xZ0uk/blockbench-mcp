@@ -50,6 +50,11 @@ never leave it to lie.
 - [ ] **Visual review (`screenshot_views`, owned-instance only)** — Reach:
   MCP `tools/call screenshot_views` against a Blockbench you started with
   an open project. Drive: call with default views, save returned PNGs to
-  `.artifacts/<task>/`. Proved when: one PNG per requested view exists on
-  disk and each is a non-empty image. Untested without an owned instance —
+  `.artifacts/<task>/`. Blueprint variant: `{views:[{view:"front",
+  ortho:true, px_per_unit:8}], ortho:true, wireframe:false}` — per-view
+  `{view, ortho?, px_per_unit?, wireframe?}` overrides call-level flags.
+  Proved when: one PNG per requested view exists on
+  disk and each is a non-empty image; summary text ends
+  `(projection restored)` and each `View:` line names its blueprint flags.
+  Untested without an owned instance —
   record `untested + reason`, never silent.
