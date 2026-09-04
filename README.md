@@ -173,6 +173,7 @@ agent — they are not required for the MCP itself:
 | `blockbench-modeling` | Building shape/geometry | Silhouette-first discipline, proportion templates, mesh primitives, hierarchy |
 | `blockbench-texturing` | Texturing/UV work | `pack_uv` discipline, smooth bake, palettes, glow cores, feature painting |
 | `blockbench-animation` | Rigging/animating | Joint pivots, rotation signs, walk/run/attack/idle recipes, export hygiene |
+| `blockbench-look` | Any project with a LOOK.md | Look discovery, planning against tokens, gating the pre-save review on the look checklist |
 
 Each folder is self-contained (`SKILL.md` plus `references/` where listed). Copy the folder(s)
 into your client's skill directory. See `skills/INSTALL.md` for the per-client paths and the

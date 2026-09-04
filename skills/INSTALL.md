@@ -1,6 +1,6 @@
 # Installing the Blockbench MCP skills
 
-Four skills ship in `skills/`. Install the ones your agents need — most sessions want the core
+Five skills ship in `skills/`. Install the ones your agents need — most sessions want the core
 plus the domain skill for the task at hand:
 
 | Folder | Load it when |
@@ -9,6 +9,7 @@ plus the domain skill for the task at hand:
 | `blockbench-modeling/` | Building shape/geometry (proportions, meshes, hierarchy) |
 | `blockbench-texturing/` | UV packing, baking, palettes, features, glow |
 | `blockbench-animation/` | Rigging and animating |
+| `blockbench-look/` | Any project with a LOOK.md (discover, plan + gate against it) |
 
 These skills teach the workflow. They do NOT replace the MCP — you still need the MCP connected
 (Blockbench open with `Tools ▸ Start MCP Server`, and the `blockbench` MCP server configured in
@@ -21,12 +22,12 @@ never single files.
 
 ### OpenCode — no copying
 
-`opencode.json` already points its `skills/` path at `skills/`, so all four skills resolve from
+`opencode.json` already points its `skills/` path at `skills/`, so all five skills resolve from
 a fresh clone with no manual step:
 
 1. Clone, install, and build the server, then open Blockbench with the bridge running.
 2. Confirm your skill listing shows `blockbench-mcp`, `blockbench-modeling`,
-   `blockbench-texturing`, and `blockbench-animation`.
+   `blockbench-texturing`, `blockbench-animation`, and `blockbench-look`.
 3. Invoke one (it loads its `SKILL.md`, e.g. `skills/blockbench-mcp/SKILL.md`) and let it
    drive a real tool call such as `get_status`.
 
@@ -41,6 +42,7 @@ cp -r skills/blockbench-mcp <your-skills-dir>/
 cp -r skills/blockbench-modeling <your-skills-dir>/
 cp -r skills/blockbench-texturing <your-skills-dir>/
 cp -r skills/blockbench-animation <your-skills-dir>/
+cp -r skills/blockbench-look <your-skills-dir>/
 ```
 
 Copy the whole folder — each one carries its `SKILL.md` plus its `references/` directory
@@ -81,3 +83,6 @@ The commands reference the skills, they do not restate them. Re-run the copy on 
 - `skills/blockbench-animation/SKILL.md` — joint pivots, rotation-sign conventions, walk/run/attack/sleep +
   humanoid recipes, pose preview, plus `skills/blockbench-animation/references/animation-scripts.md` (preview, rest reset,
   animation export).
+- `skills/blockbench-look/SKILL.md` — look discovery, planning against tokens, gating the pre-save
+  review on the look checklist, plus `skills/blockbench-look/references/look-checks.md` (texture
+  sizes, palette sampling, tri counts, gate order).

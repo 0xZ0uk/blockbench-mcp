@@ -21,6 +21,8 @@ For craft specifics, also load the domain skill you need:
 - **blockbench-modeling** — proportions, hierarchy, meshes, silhouette review (before building)
 - **blockbench-texturing** — UV packing, the smooth bake, palettes, features
 - **blockbench-animation** — rigs, rotation signs, keyframe recipes, export
+- **blockbench-look** — read and enforce the project's LOOK.md aesthetic (discover it first;
+  plan and gate against it). If the project has a look file, this loads too.
 
 ## Connection check (do this first)
 
