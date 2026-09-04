@@ -179,4 +179,107 @@ export const contractCases = [
     errorField: "value",
   },
   { id: "delete-element-missing", ticket: "#2", tool: "delete_element", args: {}, expect: "error", errorField: "element" },
+
+  // ---- ticket #3: strict bulk-create schemas (fail fast, field named) ----
+  // Valid bulk creates succeed unchanged.
+  {
+    id: "add-groups-full",
+    ticket: "#3",
+    tool: "add_groups",
+    args: {
+      groups: [
+        { name: "slide", origin: [0, 0, 0], rotation: [0, 0, 0] },
+        { name: "grip", origin: [0, -4, 2], rotation: [15, 0, 0], parent: "slide" },
+      ],
+    },
+    expect: "ok",
+  },
+  {
+    id: "add-cubes-full",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: {
+      cubes: [
+        {
+          name: "slide",
+          from: [-12, 0, 0],
+          to: [12, 4, 4],
+          origin: [0, 0, 0],
+          rotation: [0, 0, 0],
+          inflate: 0,
+          parent: "slide",
+          box_uv: true,
+          uv_offset: [0, 0],
+          faces: { north: { uv: [0, 0, 4, 4] } },
+        },
+      ],
+    },
+    expect: "ok",
+  },
+  // Bulk cube items require from/to as 3-element numeric arrays.
+  {
+    id: "add-cubes-item-missing-from",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: { cubes: [{ name: "bad", to: [1, 2, 3] }] },
+    expect: "error",
+    errorField: "cubes[0].from",
+  },
+  {
+    id: "add-cubes-item-missing-to",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: { cubes: [{ name: "bad", from: [0, 0, 0] }] },
+    expect: "error",
+    errorField: "cubes[0].to",
+  },
+  {
+    id: "add-cubes-item-from-short",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: { cubes: [{ name: "bad", from: [0, 0], to: [1, 2, 3] }] },
+    expect: "error",
+    errorField: "cubes[0].from",
+  },
+  {
+    id: "add-cubes-item-from-non-numeric",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: { cubes: [{ name: "bad", from: [0, "x", 0], to: [1, 2, 3] }] },
+    expect: "error",
+    errorField: "cubes[0].from",
+  },
+  {
+    id: "add-cubes-item-to-short",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: { cubes: [{ name: "bad", from: [0, 0, 0], to: [1, 2] }] },
+    expect: "error",
+    errorField: "cubes[0].to",
+  },
+  // Bulk group and cube items reject unknown properties (typos fail fast).
+  {
+    id: "add-cubes-item-unknown-prop",
+    ticket: "#3",
+    tool: "add_cubes",
+    args: { cubes: [{ name: "bad", from: [0, 0, 0], to: [1, 2, 3], frm: [0, 0, 0] }] },
+    expect: "error",
+    errorField: "cubes[0].frm",
+  },
+  {
+    id: "add-groups-item-unknown-prop",
+    ticket: "#3",
+    tool: "add_groups",
+    args: { groups: [{ name: "g", bogus: 1 }] },
+    expect: "error",
+    errorField: "groups[0].bogus",
+  },
+  {
+    id: "add-groups-item-origin-short",
+    ticket: "#3",
+    tool: "add_groups",
+    args: { groups: [{ name: "g", origin: [0, 0] }] },
+    expect: "error",
+    errorField: "groups[0].origin",
+  },
 ];

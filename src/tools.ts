@@ -34,6 +34,50 @@ const obj = (
   properties,
   ...(required.length ? { required } : {}),
 });
+// Closed shape: rejects unknown properties so typos fail fast pre-flight.
+const closedObj = (
+  properties: Record<string, unknown>,
+  required: string[] = []
+): Record<string, unknown> => ({
+  type: "object",
+  properties,
+  ...(required.length ? { required } : {}),
+  additionalProperties: false,
+});
+
+// ---- bulk item schemas (strict, pre-flight source of truth) ----------------
+// Bridge coercion helpers (num3/toList) remain as defensive fallback only.
+const groupItemSchema = closedObj({
+  name: { type: "string", description: "Group / bone name." },
+  origin: vec3("Pivot point [x,y,z]."),
+  rotation: vec3("Initial rotation in degrees [x,y,z]."),
+  parent: { type: "string", description: "uuid or name of the parent group." },
+});
+
+const cubeItemSchema = closedObj(
+  {
+    name: { type: "string", description: "Cube name." },
+    from: vec3("Lower corner [x,y,z]."),
+    to: vec3("Upper corner [x,y,z]."),
+    origin: vec3("Rotation pivot [x,y,z] (defaults to `from`)."),
+    rotation: vec3("Rotation in degrees [x,y,z]."),
+    inflate: { type: "number", description: "Inflate (+) or shrink (-) all faces in place." },
+    autouv: { type: "number", enum: [0, 1, 2], description: "0 disabled, 1 auto, 2 relative auto." },
+    box_uv: { type: "boolean", description: "Use box UV (default follows the format)." },
+    uv_offset: {
+      type: "array",
+      items: { type: "number" },
+      description: "[u,v] offset for box UV.",
+    },
+    parent: { type: "string", description: "uuid or name of the parent group." },
+    faces: {
+      type: "object",
+      description:
+        "Optional per-face setup, keyed by north/south/east/west/up/down.",
+    },
+  },
+  ["from", "to"]
+);
 
 function text(value: unknown): ContentBlock[] {
   const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -169,7 +213,7 @@ export const tools: ToolDef[] = [
         groups: {
           type: "array",
           description: "Array of group specs: {name, origin:[x,y,z], rotation:[x,y,z], parent:name|uuid}.",
-          items: { type: "object" },
+          items: groupItemSchema,
         },
       },
       ["groups"]
@@ -183,7 +227,7 @@ export const tools: ToolDef[] = [
         cubes: {
           type: "array",
           description: "Array of cube specs (each like add_cube's args).",
-          items: { type: "object" },
+          items: cubeItemSchema,
         },
       },
       ["cubes"]
