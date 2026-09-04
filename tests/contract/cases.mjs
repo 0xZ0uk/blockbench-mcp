@@ -673,4 +673,30 @@ export const contractCases = [
     expect: "error",
     errorField: "wireframe",
   },
+
+  // ---- ticket #24: query_elements paged, filtered lookups ----
+  // Filters + paging schemas; bridge filtering math is pinned in
+  // query-elements.test.mjs (real handlers, stubbed globals).
+  { id: "query-elements-empty-args", ticket: "#24", tool: "query_elements", args: {}, expect: "ok" },
+  { id: "query-elements-regex", ticket: "#24", tool: "query_elements", args: { regex: "^leg|arm_" }, expect: "ok" },
+  { id: "query-elements-parent", ticket: "#24", tool: "query_elements", args: { parent: "slide" }, expect: "ok" },
+  {
+    id: "query-elements-all-filters",
+    ticket: "#24",
+    tool: "query_elements",
+    args: { regex: "leg", parent: "slide", limit: 5, offset: 5 },
+    expect: "ok",
+  },
+  { id: "query-elements-limit-type", ticket: "#24", tool: "query_elements", args: { limit: "10" }, expect: "error", errorField: "limit" },
+  { id: "query-elements-offset-type", ticket: "#24", tool: "query_elements", args: { offset: true }, expect: "error", errorField: "offset" },
+  { id: "query-elements-regex-type", ticket: "#24", tool: "query_elements", args: { regex: 42 }, expect: "error", errorField: "regex" },
+  { id: "query-elements-parent-type", ticket: "#24", tool: "query_elements", args: { parent: 42 }, expect: "error", errorField: "parent" },
+  {
+    id: "query-elements-unknown-prop",
+    ticket: "#24",
+    tool: "query_elements",
+    args: { bogus: 1 },
+    expect: "error",
+    errorField: "bogus",
+  },
 ];
