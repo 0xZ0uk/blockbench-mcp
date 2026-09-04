@@ -11,9 +11,9 @@ never leave it to lie.
    `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
-   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-   passing (tallies grow as cases are added; at ticket #25 post-rebase:
-   81 tests / 0 fail, 108 contract cases).
+    `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
+    passing (tallies grow as cases are added; at ticket #22 post-rebase:
+    99 tests / 0 fail, 108 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -46,7 +46,11 @@ never leave it to lie.
   `fix` patch `{element, issue, tool, fix}` whose `fix` is directly usable
   as args to the named tool (table-driven + schema-replayed by
   `tests/contract/fixpatches.test.mjs`); `fix` is omitted when no safe
-  patch can be derived.
+  patch can be derived. The top level carries the machine-readable
+  done-gate `gate: {errors, warnings, gate_pass}` — errors =
+  degenerate_size + zero_uv + uv_out_of_bounds + coplanar_overlap,
+  warnings = no_texture + no_bone_parent, `gate_pass` true iff errors == 0
+  (table-driven by `tests/contract/gate-summary.test.mjs`).
 - [ ] **Bulk edit/delete (`edit_elements` / `delete_elements`, stubbed)** — Reach: MCP
   `tools/call edit_elements` / `delete_elements` with the bridge stubbed (contract suite)
   or an owned stdio server over in-memory transport. Drive: call with

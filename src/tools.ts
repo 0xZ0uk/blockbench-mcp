@@ -35,6 +35,22 @@ export type FixPatch = {
   tool: "edit_element" | "edit_elements" | "set_cube_uv";
 };
 
+/**
+ * Machine-readable done-gate summary on the check_model result (ticket #22).
+ * Classification: errors = degenerate_size, zero_uv, uv_out_of_bounds,
+ * coplanar_overlap (geometry/UV defects that break the render);
+ * warnings = no_texture, no_bone_parent (missing assignments recoverable
+ * without geometry changes). `gate_pass` is true iff errors == 0, so agents
+ * evaluate the done-gate without parsing prose. Unknown future kinds count
+ * as errors (fail-closed). `gate` is additive — the issue list shape is
+ * unchanged.
+ */
+export type GateSummary = {
+  errors: number;
+  warnings: number;
+  gate_pass: boolean;
+};
+
 // ---- schema helpers --------------------------------------------------------
 const vec3 = (desc: string) => ({
   type: "array",
@@ -296,7 +312,7 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "check_model",
-    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, and Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one another'). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar). Returns a grouped issue list. Each issue may carry a structured `fix` patch {element, issue, tool, fix} whose `fix` is directly usable as arguments to the named tool (edit_element | edit_elements | set_cube_uv) — coplanar_overlap nudges one cube >=0.1 via edit_elements, no_texture assigns the project's single texture to the flagged face via set_cube_uv, uv_out_of_bounds clamps the UV into bounds via set_cube_uv, degenerate_size restores a 1-unit extent via edit_element, no_bone_parent attaches to the project's single bone via edit_element. Patches are proposals only — nothing is auto-applied; `fix` is omitted when no safe patch can be derived (zero-area UVs, ambiguous texture/bone choice).",
+    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, and Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one another'). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar). Returns a grouped issue list. Each issue may carry a structured `fix` patch {element, issue, tool, fix} whose `fix` is directly usable as arguments to the named tool (edit_element | edit_elements | set_cube_uv) — coplanar_overlap nudges one cube >=0.1 via edit_elements, no_texture assigns the project's single texture to the flagged face via set_cube_uv, uv_out_of_bounds clamps the UV into bounds via set_cube_uv, degenerate_size restores a 1-unit extent via edit_element, no_bone_parent attaches to the project's single bone via edit_element. Patches are proposals only — nothing is auto-applied; `fix` is omitted when no safe patch can be derived (zero-area UVs, ambiguous texture/bone choice). The top level also carries a machine-readable done-gate `gate: {errors, warnings, gate_pass}` — errors = degenerate_size + zero_uv + uv_out_of_bounds + coplanar_overlap, warnings = no_texture + no_bone_parent, `gate_pass` true iff errors == 0 (warnings don't fail the gate).",
     obj({})
   ),
   forward(
