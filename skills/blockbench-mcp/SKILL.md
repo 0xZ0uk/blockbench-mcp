@@ -36,12 +36,56 @@ get_status / get_guide
  -> bake                      (`smooth_bake` — see blockbench-texturing)
  -> paint features            (eyes, claws, runes, glow cores — AFTER the bake)
  -> screenshot_views          (front / side / back / iso AND the reference's exact angle)
- -> check_model               (fix untextured faces, bad UVs, unparented cubes)
+ -> check_model               (read the gate field — see Done-gate; apply fix patches)
  -> COMPARE to the reference, fix what is wrong, screenshot again. Repeat 2-4x.
+ -> done-gate check           (zero errors + blueprint side/front/top at the pinned scale)
  -> save_project + export     (project file, texture PNG, model JSON through the format codec)
 ```
 
-Iterate at least 2-3 passes. The first pass is never good enough.
+Iterate at least 2-3 passes. The first pass is never good enough. The loop terminates on
+data (the Done-gate below), not on vibes.
+
+## Done-gate (the check before save_project)
+
+This is the condition an agent checks before `save_project` — not after, not instead of it.
+
+- Run `check_model` and read its machine-readable `gate` field: require `gate.errors === 0`
+  and `gate.gate_pass === true` (zero errors; warnings such as untextured faces do not fail
+  the gate). Errors are geometry/UV defects that break the render; warnings are missing
+  assignments recoverable without geometry changes.
+- Separately capture blueprint side/front/top via `screenshot_views` with ortho pinned and
+  the same `px_per_unit` value, and confirm UVs do not overlap. UV defects already fail the
+  gate as errors; the blueprint views are the visual confirmation at a measurable scale.
+- `save_project` never blocks on gate state — when the most recent `check_model` gate did not
+  pass it only attaches an advisory `warning` naming the error count. That warning is the
+  backstop, not the gate. Do not save until the gate passes.
+
+## Locate first: query_elements, not list_outliner
+
+- `query_elements` is the documented locate step: a filtered, paged lookup returning directly
+  addressable refs usable verbatim in `get_element`, `edit_elements`, and `measure`. Use it
+  before any full-tree read.
+- Filters: `regex` on the name (case-insensitive) and `parent` group (direct children only).
+  Paging uses limit/offset and the response carries an honest total (matches counted BEFORE
+  pagination) — page with offset until the returned refs cover the total.
+- `list_outliner` is the legacy full-tree dump. Keep it as the fallback for tiny models, never
+  as the first locate step on large models. On large models prefer `query_elements` over
+  dumping the whole tree.
+
+## Retry contract + escape-hatch errors
+
+- Bulk creates (`add_groups` / `add_cubes`) accept `dedupe_by_name:true`: when true, an item
+  whose name matches an existing element of the same kind is updated in place (its result
+  carries `updated:true`) instead of created again. Always set it on bulk creates; if a bulk
+  call times out, retry once with the same payload — a timed-out and retried call never
+  creates double geometry.
+- The bridge retries once on timeout only. Bridge-reported errors and unreachable-bridge
+  errors are not retried — surface them instead of looping retries.
+- The remaining `execute_script` escape hatch fails predictably: linted, truncated error text
+  of the form execute_script compile-or-runtime error at line N with the message (async
+  rejections report as runtime); the raw stack stays in the Blockbench console, never in the
+  MCP result. Use it only when no dedicated tool expresses the edit — never for operations
+  that have native tools (`smooth_bake`, `export_textures`, `preview_pose`).
 
 ## Hard rules (these are the difference between good and bad)
 
@@ -55,13 +99,16 @@ Iterate at least 2-3 passes. The first pass is never good enough.
 4. **REVIEW CRITICALLY.** When a screenshot looks off, FIX it — never write "good enough" about a
    flaw you can see. Compare against the reference, not your own lowered bar. The most common
    self-deception is rationalising a wrong pose or proportion after seeing it.
+5. **Terminate on data.** No `save_project` until the Done-gate passes (`gate.errors === 0`,
+   `gate.gate_pass === true`, plus blueprint side/front/top at the pinned scale).
 
 ## Tool cheat-sheet
 
-- Discover/plan: `get_status`, `get_guide`, `list_outliner`, `get_element`, `list_formats`.
-- Find targets: `query_elements` — filtered, paged element lookup (`regex` on name,
-  `parent` group) returning `{name, uuid}` refs usable verbatim in edit/measure tools.
-  On large models prefer it over dumping the whole tree with `list_outliner`.
+- Discover/plan: `get_status`, `get_guide`, `get_element`, `list_formats`.
+- Find targets FIRST with `query_elements` — filtered, paged element lookup (`regex` on name,
+  `parent` group) returning `{name, uuid}` refs usable verbatim in `get_element` /
+  `edit_elements` / `measure`. Page honestly until the response total is covered.
+  `list_outliner` is the legacy full-tree dump (fallback for tiny models, not the lead).
 - Project: `new_project` (pick the format first), `set_project_meta`, `save_project`,
   `load_project`, `close_project`, `export_project`.
 - Build: `add_groups`, `add_cubes`, `add_mesh` (crystals/cones/cylinders/wedges — mesh-capable
@@ -77,7 +124,8 @@ Iterate at least 2-3 passes. The first pass is never good enough.
 - Animate: `create_animation`, `add_keyframe(s)`, `preview_pose` (pose preview at a time, then screenshot), `list_animations`, `remove_animation`.
 - Plugins: `list_plugins`, `install_plugin`, `uninstall_plugin`.
 - Escape hatch: `execute_script` — full Blockbench API (undo-wrapped snippets live in the
-  domain skills' references). Use it when a dedicated tool cannot express the edit.
+  domain skills' references). Use it only when no dedicated tool expresses the edit — never
+  for operations that have native tools.
 
 ## Choosing the project format
 
@@ -109,6 +157,7 @@ Run `list_formats` to see what this install supports, then pick by target:
 
 ## Review hygiene
 
-Every build session ends with: `check_model` clean, screenshots from the reference's angle
-compared honestly against it, project saved, exports written. If a flaw is visible, the session
-is not done.
+Every build session ends with: `check_model` gate passing (`gate.errors === 0`,
+`gate.gate_pass === true`), blueprint side/front/top at the pinned `px_per_unit` scale compared
+honestly against the reference, project saved via `save_project`, exports written. If a flaw is
+visible, the session is not done.
