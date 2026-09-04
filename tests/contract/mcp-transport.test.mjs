@@ -56,6 +56,46 @@ test("mcp tools/call bridge error returns isError naming the field", async () =>
   });
 });
 
+test("mcp tools/call compare_views renders per-view MATCH/MISSING lines", async () => {
+  const bridge = {
+    count: 2,
+    matched: 1,
+    differed: 0,
+    missing: ["preset:top"],
+    projection_restored: true,
+    comparisons: [
+      {
+        view: "preset:front",
+        match: true,
+        compared: true,
+        delta: "identical to pinned reference (image/png 70 bytes 1x1)",
+        reference: { mime: "image/png", bytes: 70, width: 1, height: 1 },
+        shot: { mime: "image/png", bytes: 70, width: 1, height: 1, ortho: true, px_per_unit: 8, wireframe: false },
+        projection_restored: true,
+      },
+      {
+        view: "preset:top",
+        match: false,
+        compared: false,
+        error: 'Field "view" "preset:top" has no pinned reference. Pin one with set_reference_image first.',
+        projection_restored: true,
+      },
+    ],
+  };
+  await withClient({ compare_views: { result: bridge } }, async (client) => {
+    const result = await client.callTool({
+      name: "compare_views",
+      arguments: { views: ["front", "top"] },
+    });
+    assert.equal(result.isError ?? false, false);
+    const texts = result.content.filter((c) => c.type === "text").map((c) => c.text);
+    assert.equal(texts.length, 3);
+    assert.match(texts[0], /Compared 2 view\(s\): 1 match, 0 differ, 1 missing reference/);
+    assert.match(texts[1], /View preset:front: MATCH/);
+    assert.match(texts[2], /View preset:top: MISSING REFERENCE.*Field "view"/);
+  });
+});
+
 /**
  * Connect a real Client to the production server over an in-memory
  * transport with the bridge (global fetch) stubbed. No ports, no projects.
