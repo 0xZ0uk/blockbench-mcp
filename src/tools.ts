@@ -99,6 +99,7 @@ const scopeFields = (): Record<string, unknown> => ({
   },
   elements: {
     type: "array",
+    minItems: 1,
     items: { type: "string" },
     description:
       "Cube names/uuids to process. Required when `scope` is 'selected' (the bridge rejects a missing or empty `elements` naming this field).",
@@ -585,7 +586,7 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "paint_faces",
-    "Paint features onto specific cube faces using coordinates RELATIVE to each face (so [0,0] is that face's top-left corner) — no manual UV math, which is what usually causes misplaced/garbled texture. Use it for eyes, nostrils, mouths, claws, fur tufts, stripes, scars, bandages, armour trim, etc. Either pass one {cube, face, base?, ops?} or a `faces` array of them. Scope default: omitted `scope` keeps the single/batch form behavior; `scope` + `elements[]` paints the same face selection onto many cubes at once; omitted `face` paints ALL faces of the target cube(s).",
+    "Paint features onto specific cube faces using coordinates RELATIVE to each face (so [0,0] is that face's top-left corner) — no manual UV math, which is what usually causes misplaced/garbled texture. Use it for eyes, nostrils, mouths, claws, fur tufts, stripes, scars, bandages, armour trim, etc. Either pass one {cube, face, base?, ops?} or a `faces` array of them. Scope default: omitted `scope` keeps the single/batch form behavior; `scope` + `elements[]` paints the same face selection onto many cubes at once; omitted `face` paints ALL faces of the target cube(s). `faces` and `scope`/`elements[]` are mutually exclusive — the bridge rejects the mix naming `faces`.",
     obj({
       ...scopeFields(),
       cube: { type: "string", description: "Cube uuid/name (single-face form)." },

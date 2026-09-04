@@ -438,6 +438,22 @@ export const contractCases = [
     errorField: "scope",
   },
   {
+    id: "scope-pack-uv-empty-elements",
+    ticket: "#8",
+    tool: "pack_uv",
+    args: { scope: "selected", elements: [] },
+    expect: "error",
+    errorField: "elements",
+  },
+  {
+    id: "scope-pack-uv-elements-empty-implied",
+    ticket: "#8",
+    tool: "pack_uv",
+    args: { elements: [] },
+    expect: "error",
+    errorField: "elements",
+  },
+  {
     id: "scope-detail-selected",
     ticket: "#8",
     tool: "detail_cubes",

@@ -2068,6 +2068,7 @@ const commands = {
 		const sel = resolveScope(p);
 		let items;
 		if (sel.mode !== 'legacy') {
+			if (p.faces != null) throw new Error('Pass either "faces" or "scope"/"elements", not both.');
 			const cubes = sel.mode === 'all'
 				? Cube.all.slice()
 				: sel.refs.map(findElement).filter((c) => c instanceof Cube);
