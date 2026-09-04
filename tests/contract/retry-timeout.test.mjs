@@ -75,6 +75,7 @@ test("double timeout: surfaces the existing timeout error after exactly two atte
   );
   assert.equal(calls.length, 2, "no infinite retry, no exponential machinery");
 });
+
 test("timeout then bridge error: retry happens once, second-attempt error surfaces", async (t) => {
   const calls = [];
   globalThis.fetch = async (...args) => {
@@ -90,7 +91,8 @@ test("timeout then bridge error: retry happens once, second-attempt error surfac
   assert.equal(calls.length, 2, "one retry, then stop — no further attempts");
 });
 
-test("bridge-reported error: NOT retried", async (t) => {  const calls = [];
+test("bridge-reported error: NOT retried", async (t) => {
+  const calls = [];
   globalThis.fetch = async (...args) => {
     calls.push(args);
     return bridgeErrorResponse("bad cube spec");

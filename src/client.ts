@@ -69,8 +69,9 @@ async function attemptSend(
  * `result`, or throws an Error carrying the message reported by Blockbench.
  *
  * Retry policy (ticket #20): a timed-out attempt is re-sent exactly once
- * with the identical request before giving up. Safe because bulk creation
- * is idempotent (`dedupe_by_name`, ticket #19). Non-timeout failures —
+ * with the identical request before giving up. Safe when creation runs with
+ * `dedupe_by_name:true` (ticket #19); without the flag, a retried creation
+ * still duplicates. Non-timeout failures —
  * bridge-reported errors, unreachable bridge — are never retried.
  */
 export async function callBlockbench(
