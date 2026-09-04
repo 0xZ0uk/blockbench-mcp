@@ -12,7 +12,7 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 26 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 29 pass / 0 fail).
 - [ ] **Bridge status (read-only, shared-safe)** — Reach:
   `curl -s http://127.0.0.1:8787/ping` plus `get_status` over the bridge.
   Drive: curl, or MCP `tools/call get_status` with an owned stdio server.

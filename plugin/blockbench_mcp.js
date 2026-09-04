@@ -491,7 +491,10 @@ function applyAngleName(preview, name) {
  * Orthographic side/front/top shots with a pixels-per-unit guarantee and an
  * optional wireframe overlay. Callers own which view to shoot; these helpers
  * own only the pin/scale/overlay/restore mechanics so every shot behaves
- * identically. Blockbench ortho frustum: px per unit = 40 x camera.zoom.
+ * identically. Blockbench ortho frustum is CSS-pixel based (40 x zoom CSS
+ * px per unit) while the captured canvas renders at device resolution, so
+ * the zoom pin compensates for devicePixelRatio to hold the PNG-level
+ * guarantee on connected previews.
  */
 const BLUEPRINT_PX_PER_UNIT_K = 40;
 
@@ -582,7 +585,11 @@ function applyBlueprintSettings(preview, bp) {
 	// Scale guarantee holds only for ortho shots; never bend a perspective
 	// camera's zoom and report it as px-per-unit.
 	if (bp.ortho && typeof bp.px_per_unit === 'number' && preview && preview.camera) {
-		preview.camera.zoom = bp.px_per_unit / BLUEPRINT_PX_PER_UNIT_K;
+		// Ortho frustum is CSS-pixel based but screenshotPreview returns the
+		// device-resolution canvas: divide out devicePixelRatio so the PNG
+		// carries px_per_unit device px per model unit at any display scaling.
+		const dpr = (typeof window !== 'undefined' && window && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+		preview.camera.zoom = bp.px_per_unit / (BLUEPRINT_PX_PER_UNIT_K * (dpr || 1));
 		if (typeof preview.camera.updateProjectionMatrix === 'function') preview.camera.updateProjectionMatrix();
 	}
 	if (bp.wireframe && typeof Project !== 'undefined' && Project) {
