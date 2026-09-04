@@ -164,7 +164,7 @@ upload the zip or point the client at the folder. See `skills/INSTALL.md`.
 | **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `edit_element`, `edit_elements`, `delete_element`, `delete_elements`, `list_outliner`, `query_elements`, `get_element`, `measure`, `check_model` |
 | **UV & textures** | `create_texture`, `paint_texture`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `list_textures`, `get_texture` |
 | **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `list_animations`, `remove_animation` |
-| **View** | `set_camera_angle`, `screenshot`, `screenshot_views`, `set_reference_image` |
+| **View** | `set_camera_angle`, `screenshot`, `screenshot_views`, `set_reference_image`, `compare_views` |
 | **Plugins** | `list_plugins`, `install_plugin`, `uninstall_plugin` |
 | **Escape hatch** | `execute_script` |
 
@@ -232,6 +232,12 @@ check_model {}
 // afterward, so shots are reproducible regardless of earlier camera calls)
 screenshot_views { "views": [{ "view": "front", "ortho": true, "px_per_unit": 8 },
                              { "view": "top", "ortho": true, "px_per_unit": 8, "wireframe": true }] }
+
+// Reference review: pin a baseline once, then get structured delta text per
+// view after each pass (same camera + same px_per_unit keeps deltas
+// comparable; views with no pinned reference report a per-view error)
+set_reference_image { "view": "front", "source": "data:image/png;base64,..." }
+compare_views { "views": [{ "view": "front", "ortho": true, "px_per_unit": 8 }] }
 
 // 8. Save / export
 save_project   { "path": "bear.bbmodel" }

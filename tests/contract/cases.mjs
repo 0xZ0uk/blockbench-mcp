@@ -747,4 +747,66 @@ export const contractCases = [
     expect: "error",
     errorField: "bogus",
   },
+
+  // ---- ticket #26: compare_views structured delta text ----
+  // Same camera semantics as screenshot_views; views is required (no
+  // default set — nothing to compare without requested views). Handler
+  // round-trips (missing reference, unchanged model, pin -> edit ->
+  // compare) plus restore guarantees are pinned in
+  // compare-views.test.mjs (real bridge handler, stubbed globals).
+  { id: "compare-views-preset", ticket: "#26", tool: "compare_views", args: { views: ["front"] }, expect: "ok" },
+  {
+    id: "compare-views-blueprint-per-view",
+    ticket: "#26",
+    tool: "compare_views",
+    args: {
+      views: [
+        { view: "front", ortho: true, px_per_unit: 8 },
+        { view: { position: [0, 8, 32], target: [0, 8, 0] }, wireframe: true },
+      ],
+    },
+    expect: "ok",
+  },
+  {
+    id: "compare-views-blueprint-call",
+    ticket: "#26",
+    tool: "compare_views",
+    args: { views: ["front", "top"], ortho: true, px_per_unit: 8 },
+    expect: "ok",
+  },
+  { id: "compare-views-missing-views", ticket: "#26", tool: "compare_views", args: {}, expect: "error", errorField: "views" },
+  { id: "compare-views-views-type", ticket: "#26", tool: "compare_views", args: { views: "front" }, expect: "error", errorField: "views" },
+  { id: "compare-views-views-empty", ticket: "#26", tool: "compare_views", args: { views: [] }, expect: "error", errorField: "views" },
+  {
+    id: "compare-views-ortho-type",
+    ticket: "#26",
+    tool: "compare_views",
+    args: { views: ["front"], ortho: "yes" },
+    expect: "error",
+    errorField: "ortho",
+  },
+  {
+    id: "compare-views-px-type",
+    ticket: "#26",
+    tool: "compare_views",
+    args: { views: ["front"], px_per_unit: "8" },
+    expect: "error",
+    errorField: "px_per_unit",
+  },
+  {
+    id: "compare-views-wireframe-type",
+    ticket: "#26",
+    tool: "compare_views",
+    args: { views: ["front"], wireframe: "yes" },
+    expect: "error",
+    errorField: "wireframe",
+  },
+  {
+    id: "compare-views-unknown-prop",
+    ticket: "#26",
+    tool: "compare_views",
+    args: { views: ["front"], bogus: 1 },
+    expect: "error",
+    errorField: "bogus",
+  },
 ];

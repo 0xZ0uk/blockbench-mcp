@@ -638,6 +638,165 @@ function applyBlueprintSettings(preview, bp) {
 	}
 }
 
+/** Place the preview camera from normalized blueprint params (shared by screenshot/compare). */
+function placeCameraOnPreview(preview, bp) {
+	if (bp.position || bp.target) {
+		if (Array.isArray(bp.position)) preview.camera.position.set(bp.position[0], bp.position[1], bp.position[2]);
+		if (Array.isArray(bp.target) && preview.controls) preview.controls.target.set(bp.target[0], bp.target[1], bp.target[2]);
+	} else if (bp.presetName) {
+		const preset = (typeof DefaultCameraPresets !== 'undefined' && DefaultCameraPresets)
+			? DefaultCameraPresets.find((x) => x.id === bp.presetName || x.name === bp.presetName) : null;
+		if (preset && preview.loadAnglePreset) preview.loadAnglePreset(preset);
+		else applyAngleName(preview, bp.presetName);
+	}
+}
+
+/**
+ * Capture one blueprint shot per requested view with the screenshot_views
+ * plumbing (normalize → place → pin → render → shot → per-shot restore,
+ * entry-state restore in finally). Returns {shots, projection_restored} in
+ * the screenshot_views shot shape. Throws naming "px_per_unit" for
+ * non-positive scales.
+ */
+async function captureBlueprintViews(preview, views, defaults, options) {
+	const opts = options || {};
+	const shotOne = () => new Promise((res) =>
+		Screencam.screenshotPreview(preview, opts, (d) => res(d)));
+	const entryState = savePreviewState(preview);
+	const shots = [];
+	try {
+		for (const v of views) {
+			const bp = normalizeBlueprintView(v, defaults);
+			if (bp.px_per_unit !== undefined && !(bp.px_per_unit > 0)) {
+				throw new Error('Field "px_per_unit" must be a positive number.');
+			}
+			const saved = savePreviewState(preview);
+			try {
+				placeCameraOnPreview(preview, bp);
+				if (preview.controls && preview.controls.updateSceneScale) preview.controls.updateSceneScale();
+				applyBlueprintSettings(preview, bp);
+				preview.render();
+				const dataUrl = await shotOne();
+				// Report applied state, not just requested flags, so a
+				// build missing the projection/wireframe APIs cannot
+				// silently claim a guarantee it did not deliver.
+				const heldOrtho = (preview && typeof preview.isOrtho === 'boolean') ? preview.isOrtho : !!bp.ortho;
+				const heldWire = (typeof Project !== 'undefined' && Project)
+					? Project.view_mode === 'wireframe' : !!bp.wireframe;
+				const shotOrtho = !!bp.ortho && heldOrtho;
+				const shotWire = !!bp.wireframe && heldWire;
+				const { projection_restored } = restorePreviewState(preview, saved);
+				shots.push({
+					view: bp.label,
+					data_url: dataUrl,
+					base64: dataUrl.replace(/^data:image\/png;base64,/, ''),
+					ortho: shotOrtho,
+					px_per_unit: shotOrtho && typeof bp.px_per_unit === 'number' ? bp.px_per_unit : null,
+					wireframe: shotWire,
+					projection_restored,
+				});
+			} catch (err) {
+				restorePreviewState(preview, saved);
+				throw err;
+			}
+		}
+	} finally {
+		restorePreviewState(preview, entryState);
+	}
+	return { shots, projection_restored: shots.every((s) => s.projection_restored) };
+}
+
+/**
+ * Structured image comparison mechanics (ticket #26 service layer). The
+ * bridge has no native pixel-diff library, so deltas are computed from
+ * decoded bytes: byte equality decides match (deterministic for the same
+ * model + camera + px_per_unit), while PNG IHDR dimensions plus byte counts
+ * make the delta text structured enough to drive a fix and textual enough
+ * to read. Callers own when to capture/pin; these helpers own only decoding
+ * and delta text.
+ */
+
+/** Split a data:...;base64,... URL into {mime, bytes}; null when undecodable. */
+function dataUrlToBytes(dataUrl) {
+	if (typeof dataUrl !== 'string') return null;
+	const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/s);
+	if (!m) return null;
+	try {
+		const buf = Buffer.from(m[2], 'base64');
+		if (!buf || !buf.length) return null;
+		return { mime: m[1], bytes: buf };
+	} catch (e) { return null; }
+}
+
+/** Read PNG IHDR width/height; null unless the buffer is a parseable PNG. */
+function parsePngDimensions(buf) {
+	try {
+		if (!buf || buf.length < 24) return null;
+		if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 &&
+			buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A)) return null;
+		if (!(buf[12] === 0x49 && buf[13] === 0x48 && buf[14] === 0x44 && buf[15] === 0x52)) return null;
+		return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+	} catch (e) { return null; }
+}
+
+/** One-line shape for a decoded image: `image/png 70 bytes 1x1` (dims only when parseable). */
+function describeImageBits(mime, buf) {
+	const dim = parsePngDimensions(buf);
+	return `${mime} ${buf.length} bytes${dim ? ` ${dim.width}x${dim.height}` : ''}`;
+}
+
+/**
+ * Compare a fresh shot against its pinned reference. Returns {match, delta,
+ * reference, shot} where reference/shot carry {mime, bytes, width, height}
+ * (width/height null when not PNG-parseable) and delta is stable text:
+ * identical bytes → `identical ...`, otherwise differing-byte counts plus
+ * first-diff offset plus both sizes. Deterministic: the same model + camera
+ * + px_per_unit yields the same bytes, hence the same delta shape.
+ */
+function describeImageDelta(refDataUrl, shotDataUrl) {
+	const ref = dataUrlToBytes(refDataUrl);
+	const shot = dataUrlToBytes(shotDataUrl);
+	if (!ref || !shot) {
+		const refDim = ref ? parsePngDimensions(ref.bytes) : null;
+		const shotDim = shot ? parsePngDimensions(shot.bytes) : null;
+		return {
+			match: false,
+			delta: 'could not decode the pinned reference or the fresh capture for comparison.',
+			reference: ref ? { mime: ref.mime, bytes: ref.bytes.length, width: refDim ? refDim.width : null, height: refDim ? refDim.height : null } : null,
+			shot: shot ? { mime: shot.mime, bytes: shot.bytes.length, width: shotDim ? shotDim.width : null, height: shotDim ? shotDim.height : null } : null,
+		};
+	}
+	const refDim = parsePngDimensions(ref.bytes);
+	const shotDim = parsePngDimensions(shot.bytes);
+	const meta = (m, b, d) => ({ mime: m, bytes: b.length, width: d ? d.width : null, height: d ? d.height : null });
+	if (ref.bytes.equals(shot.bytes)) {
+		return {
+			match: true,
+			delta: `identical to pinned reference (${describeImageBits(shot.mime, shot.bytes)})`,
+			reference: meta(ref.mime, ref.bytes, refDim),
+			shot: meta(shot.mime, shot.bytes, shotDim),
+		};
+	}
+	const n = Math.min(ref.bytes.length, shot.bytes.length);
+	const big = Math.max(ref.bytes.length, shot.bytes.length);
+	let differing = Math.abs(ref.bytes.length - shot.bytes.length);
+	let firstDiff = -1;
+	for (let i = 0; i < n; i++) {
+		if (ref.bytes[i] !== shot.bytes[i]) {
+			differing++;
+			if (firstDiff < 0) firstDiff = i;
+		}
+	}
+	if (firstDiff < 0) firstDiff = n;
+	return {
+		match: false,
+		delta: `differs from pinned reference: ${differing}/${big} bytes differ (first diff at byte ${firstDiff}); ` +
+			`shot ${describeImageBits(shot.mime, shot.bytes)} vs reference ${describeImageBits(ref.mime, ref.bytes)}`,
+		reference: meta(ref.mime, ref.bytes, refDim),
+		shot: meta(shot.mime, shot.bytes, shotDim),
+	};
+}
+
 /**
  * Reference-image pinning mechanics (ticket #25 service layer). One image
  * per blueprint view, keyed by camera identity (preset id or explicit
@@ -2867,68 +3026,15 @@ const commands = {
 		const options = {};
 		if (p && p.width) options.width = p.width;
 		if (p && p.height) options.height = p.height;
-		const shotOne = () => new Promise((res) =>
-			Screencam.screenshotPreview(preview, options, (d) => res(d)));
-		const placeCamera = (bp) => {
-			if (bp.position || bp.target) {
-				if (Array.isArray(bp.position)) preview.camera.position.set(bp.position[0], bp.position[1], bp.position[2]);
-				if (Array.isArray(bp.target) && preview.controls) preview.controls.target.set(bp.target[0], bp.target[1], bp.target[2]);
-			} else if (bp.presetName) {
-				const preset = (typeof DefaultCameraPresets !== 'undefined' && DefaultCameraPresets)
-					? DefaultCameraPresets.find((x) => x.id === bp.presetName || x.name === bp.presetName) : null;
-				if (preset && preview.loadAnglePreset) preview.loadAnglePreset(preset);
-				else applyAngleName(preview, bp.presetName);
-			}
-		};
 		return (async () => {
-			const entryState = savePreviewState(preview);
-			const shots = [];
-			try {
-				for (const v of views) {
-					const bp = normalizeBlueprintView(v, defaults);
-					if (bp.px_per_unit !== undefined && !(bp.px_per_unit > 0)) {
-						throw new Error('Field "px_per_unit" must be a positive number.');
-					}
-					const saved = savePreviewState(preview);
-					try {
-						placeCamera(bp);
-						if (preview.controls && preview.controls.updateSceneScale) preview.controls.updateSceneScale();
-						applyBlueprintSettings(preview, bp);
-						preview.render();
-						const dataUrl = await shotOne();
-						// Report applied state, not just requested flags, so a
-						// build missing the projection/wireframe APIs cannot
-						// silently claim a guarantee it did not deliver.
-						const heldOrtho = (preview && typeof preview.isOrtho === 'boolean') ? preview.isOrtho : !!bp.ortho;
-						const heldWire = (typeof Project !== 'undefined' && Project)
-							? Project.view_mode === 'wireframe' : !!bp.wireframe;
-						const shotOrtho = !!bp.ortho && heldOrtho;
-						const shotWire = !!bp.wireframe && heldWire;
-						const { projection_restored } = restorePreviewState(preview, saved);
-						shots.push({
-							view: bp.label,
-							data_url: dataUrl,
-							base64: dataUrl.replace(/^data:image\/png;base64,/, ''),
-							ortho: shotOrtho,
-							px_per_unit: shotOrtho && typeof bp.px_per_unit === 'number' ? bp.px_per_unit : null,
-							wireframe: shotWire,
-							projection_restored,
-						});
-					} catch (err) {
-						restorePreviewState(preview, saved);
-						throw err;
-					}
-				}
-			} finally {
-				restorePreviewState(preview, entryState);
-			}
-			const allRestored = shots.every((s) => s.projection_restored);
-			return { count: shots.length, shots, projection_restored: allRestored };
+			const { shots, projection_restored } = await captureBlueprintViews(preview, views, defaults, options);
+			return { count: shots.length, shots, projection_restored };
 		})();
 	},
 
 	// Pin a reference image against one blueprint view (ticket #25, the
-	// pinning half of the reference-compare loop; compare_views follows).
+	// pinning half of the reference-compare loop; compared with
+	// compare_views).
 	// `view` is a camera preset id or {position,target} (same camera
 	// semantics as screenshot_views views). `source` is an image file path
 	// (desktop app) or inline image data; "" unpins. Pinning again replaces
@@ -2946,6 +3052,88 @@ const commands = {
 		}
 		store[key] = ref;
 		return { view: key, pinned: true, mime: ref.mime, bytes: ref.bytes };
+	},
+
+	// Compare the current model against the pinned reference images and
+	// return structured delta text per view (ticket #26, the comparison half
+	// of the reference-compare loop). `views` reuses the screenshot_views
+	// camera semantics exactly (preset id, {position,target}, or blueprint
+	// {view, ortho?, px_per_unit?, wireframe?} with call-level
+	// ortho/px_per_unit/wireframe defaults), so pinning with
+	// set_reference_image under the same view and comparing with the same
+	// camera + px_per_unit yields a stable, comparable delta. Each entry
+	// carries the canonical view key (the same key set_reference_image
+	// reports) plus a pass/fail-ish `match`. A well-formed view with no
+	// pinned reference becomes a per-view error naming "view" while the
+	// other views still compare; a malformed view fails the whole call
+	// naming "view" (same enforcement point as set_reference_image).
+	// Camera/projection state is restored after the sequence.
+	compare_views(p) {
+		requireProject();
+		if (!p || !Array.isArray(p.views) || !p.views.length) {
+			throw new Error('Field "views" must be a non-empty array of blueprint views.');
+		}
+		const preview = Preview.selected;
+		const defaults = {
+			ortho: p && typeof p.ortho === 'boolean' ? p.ortho : undefined,
+			px_per_unit: p && typeof p.px_per_unit === 'number' ? p.px_per_unit : undefined,
+			wireframe: p && typeof p.wireframe === 'boolean' ? p.wireframe : undefined,
+		};
+		if (defaults.px_per_unit !== undefined && !(defaults.px_per_unit > 0)) {
+			throw new Error('Field "px_per_unit" must be a positive number.');
+		}
+		const options = {};
+		if (p && p.width) options.width = p.width;
+		if (p && p.height) options.height = p.height;
+		const store = referenceStore();
+		const plan = p.views.map((v) => {
+			const bp = normalizeBlueprintView(v, defaults);
+			if (bp.px_per_unit !== undefined && !(bp.px_per_unit > 0)) {
+				throw new Error('Field "px_per_unit" must be a positive number.');
+			}
+			const key = referenceViewKey(v);
+			return { item: v, key, ref: store[key] || null, shot: null };
+		});
+		return (async () => {
+			const capturable = plan.filter((e) => e.ref);
+			if (capturable.length) {
+				const { shots } = await captureBlueprintViews(preview, capturable.map((e) => e.item), defaults, options);
+				capturable.forEach((e, i) => { e.shot = shots[i]; });
+			}
+			const comparisons = plan.map((e) => {
+				if (!e.ref) {
+					return {
+						view: e.key,
+						match: false,
+						compared: false,
+						error: `Field "view" ${JSON.stringify(e.key)} has no pinned reference. Pin one with set_reference_image first.`,
+						projection_restored: true,
+					};
+				}
+				const d = describeImageDelta(e.ref.data_url, e.shot.data_url);
+				return {
+					view: e.key,
+					match: d.match,
+					compared: true,
+					delta: d.delta,
+					reference: d.reference,
+					shot: Object.assign({}, d.shot, {
+						ortho: e.shot.ortho,
+						px_per_unit: e.shot.px_per_unit,
+						wireframe: e.shot.wireframe,
+					}),
+					projection_restored: e.shot.projection_restored,
+				};
+			});
+			return {
+				count: comparisons.length,
+				matched: comparisons.filter((c) => c.compared && c.match).length,
+				differed: comparisons.filter((c) => c.compared && !c.match).length,
+				missing: comparisons.filter((c) => !c.compared).map((c) => c.view),
+				projection_restored: comparisons.every((c) => c.projection_restored),
+				comparisons,
+			};
+		})();
 	},
 
 	// A compact playbook the AI can read before building, so models come out

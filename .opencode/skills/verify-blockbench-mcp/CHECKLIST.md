@@ -6,14 +6,16 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-   or a one-off stdio script. Proved when: response lists 51 tools including
+   or a one-off stdio script. Proved when: response lists 52 tools including
    `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
-   `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`.
+   `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`,
+   `compare_views`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
-    `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-    passing (tallies grow as cases are added; at ticket #23:
-    105 tests / 0 fail, 108 contract cases).
+   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
+   passing (tallies grow as cases are added; at ticket #23:
+   105 tests / 0 fail, 108 contract cases; at ticket #26:
+   115 tests / 0 fail, 118 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -120,6 +122,20 @@ never leave it to lie.
   replaces (new `bytes`), and unpin returns `{view, pinned:false}`
   (idempotent); missing files / undecodable images / bad views error
   naming `source` / `view` — pinned headless by
-  `tests/contract/set-reference-image.test.mjs`, which drives the real
-  bridge handler with stubbed Blockbench globals. Live-Blockbench drive on
-  an owned instance is optional.
+   `tests/contract/set-reference-image.test.mjs`, which drives the real
+   bridge handler with stubbed Blockbench globals. Live-Blockbench drive on
+   an owned instance is optional.
+- [ ] **Structured view comparison (`compare_views`, ticket #26)** — Reach:
+  MCP `tools/call compare_views` (needs an open project plus references
+  pinned with `set_reference_image`). Drive: compare with an empty store,
+  then pin `{view:"front", source:"data:image/png;base64,..."}` and compare
+  again with the same camera + `px_per_unit`, then change the model and
+  compare once more. Proved when: the empty-store call reports
+  `0 match, 0 differ, 1 missing reference` with a per-view error naming
+  `view`; the unchanged call reports `MATCH — identical to pinned
+  reference (...)`; the edited call reports `DIFFER` with differing-byte
+  counts, first-diff offset, and both sizes; every call ends
+  `(projection restored)` — pinned headless by
+  `tests/contract/compare-views.test.mjs`, which drives the real bridge
+  handler with stubbed Blockbench globals. Live-Blockbench drive on an
+  owned instance is optional.
