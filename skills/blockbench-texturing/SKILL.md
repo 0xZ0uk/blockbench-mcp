@@ -33,8 +33,9 @@ there and in `references/texturing-scripts.md`). Structure:
    edges.
 5. Paint crisp features AFTER the blur (next section).
 
-Tuning: pale/smooth surfaces → less mottle; fur/foliage → more; grizzled backs → a few darker
-vertical streaks on `up` faces before the blur.
+Tuning: pale/smooth surfaces → less mottle (`noise` ~0.06); fur/foliage → more; grizzled
+backs → `detail_cubes` with `streaks:true` (grain lands before its blur) or paint streaks
+with `paint_faces` after the bake.
 
 ## Palette discipline
 
