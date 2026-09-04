@@ -426,14 +426,14 @@ const r4 = (n) => Math.round(n * 10000) / 10000;
  * silently passes an unclassified problem.
  * Returns {errors, warnings, gate_pass} with gate_pass true iff errors == 0.
  */
-const GATE_SEVERITY = {
+const GATE_SEVERITY = Object.assign(Object.create(null), {
 	degenerate_size: 'error',
 	zero_uv: 'error',
 	uv_out_of_bounds: 'error',
 	coplanar_overlap: 'error',
 	no_texture: 'warning',
 	no_bone_parent: 'warning',
-};
+});
 function summarizeGate(issues) {
 	let errors = 0, warnings = 0;
 	for (const i of issues || []) {

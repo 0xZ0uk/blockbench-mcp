@@ -138,6 +138,14 @@ const cases = [
     gate: { errors: 1, warnings: 0, gate_pass: false },
   },
   {
+    id: "two-degenerate-cubes-count-per-issue",
+    cubes: [
+      { name: "fin-a", from: [3, 4, 5], to: [3, 8, 9] },
+      { name: "fin-b", from: [10, 10, 10], to: [10, 12, 14] },
+    ],
+    gate: { errors: 2, warnings: 0, gate_pass: false },
+  },
+  {
     id: "error-plus-warning-mixed-fails-with-counts",
     cubes: [
       { name: "fin", from: [3, 4, 5], to: [3, 8, 9], faces: { up: { texture: false, uv: [0, 0, 2, 2] } } },
@@ -182,8 +190,10 @@ test("gate summary: classification map is explicit and fail-closed", () => {
     no_bone_parent: "warning",
   });
   // Unknown future kinds default to error so the gate never silently passes
-  // an unclassified problem.
+  // an unclassified problem — including names inherited from Object.prototype.
   assert.deepEqual(plain(summarizeGate([{ issue: "future_kind" }])), { errors: 1, warnings: 0, gate_pass: false });
+  assert.deepEqual(plain(summarizeGate([{ issue: "toString" }])), { errors: 1, warnings: 0, gate_pass: false });
+  assert.deepEqual(plain(summarizeGate([{ issue: "constructor" }])), { errors: 1, warnings: 0, gate_pass: false });
   assert.deepEqual(plain(summarizeGate([])), { errors: 0, warnings: 0, gate_pass: true });
   assert.deepEqual(plain(summarizeGate()), { errors: 0, warnings: 0, gate_pass: true });
 });
