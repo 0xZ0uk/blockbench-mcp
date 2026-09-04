@@ -346,6 +346,46 @@ test("handler result: screenshot_views keeps legacy text for plain shots", async
   });
 });
 
+test("handler result: dedupe_by_name forwards to the bridge and updated flags pass through", async () => {
+  for (const toolName of ["add_cubes", "add_groups"]) {
+    const tool = tools.find((t) => t.name === toolName);
+    assert.ok(tool, `${toolName} must exist`);
+    const itemsKey = toolName === "add_cubes" ? "cubes" : "groups";
+    const item = toolName === "add_cubes"
+      ? { name: "slide-a", from: [0, 0, 0], to: [4, 2, 4] }
+      : { name: "slide-a" };
+    // With the flag: args reach the bridge unchanged (echo), then per-item
+    // updated flags pass through to clients (bridge simulates name-match -> update).
+    await withFakeBridge({}, async () => {
+      const blocks = await tool.handler({ dedupe_by_name: true, [itemsKey]: [item] });
+      assert.deepEqual(JSON.parse(blocks[0].text), {
+        echo: { dedupe_by_name: true, [itemsKey]: [item] },
+      });
+    });
+    const dedupeResult = {
+      created: 0,
+      updated: 1,
+      [itemsKey]: [{ uuid: "cube-1", name: "slide-a", updated: true }],
+    };
+    await withFakeBridge({ [toolName]: { result: dedupeResult } }, async () => {
+      const blocks = await tool.handler({ dedupe_by_name: true, [itemsKey]: [item] });
+      const parsed = JSON.parse(blocks[0].text);
+      assert.equal(parsed.created, 0);
+      assert.equal(parsed.updated, 1);
+      assert.equal(parsed[itemsKey][0].updated, true);
+    });
+    // Without the flag: legacy create-always shape (no `updated` anywhere).
+    const legacyResult = { created: 1, [itemsKey]: [{ uuid: "cube-2", name: "slide-a" }] };
+    await withFakeBridge({ [toolName]: { result: legacyResult } }, async () => {
+      const blocks = await tool.handler({ [itemsKey]: [item] });
+      const parsed = JSON.parse(blocks[0].text);
+      assert.equal(parsed.created, 1);
+      assert.equal(parsed.updated, undefined);
+      assert.equal(parsed[itemsKey][0].updated, undefined);
+    });
+  }
+});
+
 /**
  * Stub the bridge transport (global fetch) so handlers return canned
  * results without a live Blockbench. Restores the real fetch afterwards.

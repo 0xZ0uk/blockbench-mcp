@@ -12,7 +12,7 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 32 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 48 pass / 0 fail).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -22,6 +22,16 @@ never leave it to lie.
   `.mcp.json` test confirms `args` are the repo-relative `dist/index.js`
   with the `BLOCKBENCH_MCP_PORT` override. Stdout/stderr evidence: ready
   line names the same version.
+- [ ] **Retry-safe bulk creation (`add_cubes`/`add_groups` `dedupe_by_name`,
+  ticket #19)** — Reach: MCP `tools/list` shows the boolean option on both
+  tools' published schemas; handler behavior pinned headless by
+  `tests/contract/dedupe.test.mjs` (drives the real bridge handlers with
+  stubbed Blockbench globals). Drive: retried call with
+  `dedupe_by_name:true` where a name matches. Proved when: the element count
+  does not grow, per-item result carries `updated:true`, and top level
+  reports `{created, updated}`; without the flag the same call duplicates
+  with the legacy `{created, cubes|groups}` shape. Live-Blockbench mutation
+  stays owned-instance only — record `untested + reason` without one.
 - [ ] **Bridge status (read-only, shared-safe)** — Reach:
   `curl -s http://127.0.0.1:8787/ping` plus `get_status` over the bridge.
   Drive: curl, or MCP `tools/call get_status` with an owned stdio server.

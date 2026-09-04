@@ -1480,17 +1480,44 @@ const commands = {
 
 	// Build many bones at once. Parents may reference bones created earlier in
 	// the same batch by name, so a whole skeleton can be authored in one call.
+	// With `dedupe_by_name`, a spec whose name matches an existing group (from
+	// the project or earlier in the same batch) is updated in place instead of
+	// creating a duplicate — retry-safe bulk creation; per-item results carry
+	// `updated: true`. Without the flag, the legacy create-always path runs
+	// exactly as before.
 	add_groups(p) {
 		requireProject();
 		if (!Array.isArray(p.groups) || !p.groups.length) throw new Error('groups (array) is required');
-		Undo.initEdit({ outliner: true });
+		const dedupe = p.dedupe_by_name === true;
+		// Pre-existing name matches get a property snapshot for Undo (the
+		// outliner snapshot only covers tree structure + batch-created nodes).
+		const undoGroups = dedupe
+			? p.groups.map((s) => (s && typeof s === 'object') ? findGroup(s.name || 'group') : null).filter(Boolean)
+			: [];
+		Undo.initEdit(undoGroups.length ? { outliner: true, groups: undoGroups } : { outliner: true });
 		const created = {};
 		const out = [];
+		let updatedCount = 0;
 		for (const spec of p.groups) {
 			let parent = null;
 			if (spec.parent) {
 				parent = created[spec.parent] || findGroup(spec.parent);
 				if (!parent) throw new Error('Parent group not found: ' + spec.parent);
+			}
+			if (dedupe) {
+				const name = spec.name || 'group';
+				const existing = created[name] || findGroup(name);
+				if (existing) {
+					if (spec.origin) existing.origin = num3(spec.origin, existing.origin);
+					if (spec.rotation) existing.rotation = num3(spec.rotation, existing.rotation);
+					if (spec.parent !== undefined) existing.addTo(parent || 'root');
+					created[name] = existing;
+					const ser = serializeGroup(existing);
+					ser.updated = true;
+					out.push(ser);
+					updatedCount++;
+					continue;
+				}
 			}
 			const group = new Group({
 				name: spec.name || 'group',
@@ -1503,20 +1530,58 @@ const commands = {
 		}
 		Undo.finishEdit('MCP: add groups');
 		Canvas.updateAll();
-		return { created: out.length, groups: out };
+		if (!dedupe) return { created: out.length, groups: out };
+		return { created: out.length - updatedCount, updated: updatedCount, groups: out };
 	},
 
 	// Build many cubes at once — the efficient way to author a detailed model.
+	// With `dedupe_by_name`, a spec whose name matches an existing cube (from
+	// the project or earlier in the same batch) is updated in place instead of
+	// creating a duplicate — retry-safe bulk creation; per-item results carry
+	// `updated: true`. Without the flag, the legacy create-always path runs
+	// exactly as before.
 	add_cubes(p) {
 		requireProject();
 		if (!Array.isArray(p.cubes) || !p.cubes.length) throw new Error('cubes (array) is required');
-		Undo.initEdit({ outliner: true, elements: [] });
+		const dedupe = p.dedupe_by_name === true;
+		// Pre-existing name matches get a property snapshot for Undo (the
+		// outliner snapshot only covers tree structure + batch-created cubes).
+		const undoCubes = dedupe
+			? p.cubes.map((s) => {
+					if (!s || typeof s !== 'object') return null;
+					const el = findElement(s.name || 'cube');
+					return el instanceof Cube ? el : null;
+				}).filter(Boolean)
+			: [];
+		Undo.initEdit(undoCubes.length ? { outliner: true, elements: undoCubes } : { outliner: true, elements: [] });
 		const out = [];
+		let updatedCount = 0;
 		for (const spec of p.cubes) {
 			const parent = spec.parent ? findGroup(spec.parent) : null;
 			if (spec.parent && !parent) throw new Error('Parent group not found: ' + spec.parent);
 			const from = num3(spec.from, [0, 0, 0]);
 			const to = num3(spec.to, [from[0] + 1, from[1] + 1, from[2] + 1]);
+			if (dedupe) {
+				const name = spec.name || 'cube';
+				const existing = findElement(name);
+				if (existing && existing instanceof Cube) {
+					if (spec.from !== undefined) existing.from = from;
+					if (spec.to !== undefined) existing.to = to;
+					if (spec.origin) existing.origin = num3(spec.origin, existing.origin);
+					if (spec.rotation) existing.rotation = num3(spec.rotation, existing.rotation);
+					if (spec.inflate !== undefined) existing.inflate = Number(spec.inflate);
+					if (typeof spec.autouv === 'number') existing.autouv = spec.autouv;
+					if (spec.box_uv !== undefined) existing.box_uv = !!spec.box_uv;
+					if (Array.isArray(spec.uv_offset)) existing.uv_offset = spec.uv_offset;
+					if (spec.parent !== undefined) existing.addTo(parent || 'root');
+					if (spec.faces) applyFaces(existing, spec.faces);
+					const ser = serializeElement(existing);
+					ser.updated = true;
+					out.push(ser);
+					updatedCount++;
+					continue;
+				}
+			}
 			const cube = new Cube({
 				name: spec.name || 'cube',
 				from,
@@ -1535,7 +1600,8 @@ const commands = {
 		}
 		Undo.finishEdit('MCP: add cubes');
 		Canvas.updateAll();
-		return { created: out.length, cubes: out };
+		if (!dedupe) return { created: out.length, cubes: out };
+		return { created: out.length - updatedCount, updated: updatedCount, cubes: out };
 	},
 
 	// Shelf-pack box UVs so every cube gets its own region (box-UV cubes are all
