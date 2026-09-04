@@ -16,9 +16,13 @@ const DEFAULT_PORT = 8787;
 const PROTOCOL_VERSION = 1;
 
 // Survive plugin reloads: keep the running server on a global handle.
+// lastGate remembers the most recent check_model gate summary (ticket #23)
+// so save_project can warn (advisory only, never blocking) when the gate
+// did not pass. null/undefined means no check has run yet → no warning.
 const G = (globalThis.__BLOCKBENCH_MCP__ = globalThis.__BLOCKBENCH_MCP__ || {
 	server: null,
 	port: null,
+	lastGate: null,
 });
 
 // Blockbench gives plugins a permission-scoped `require`. The 'http' module is
@@ -1523,12 +1527,17 @@ const commands = {
 		if (p.texture_width) Project.texture_width = p.texture_width | 0;
 		if (p.texture_height) Project.texture_height = p.texture_height | 0;
 		Canvas.updateAll();
+		// A new project has never been checked: drop any gate remembered
+		// from the previous project so save_project can't warn stale (ticket #23).
+		G.lastGate = null;
 		return commands.get_status().project;
 	},
 
 	close_project() {
 		requireProject();
 		if (Project.close) Project.close(true);
+		// No open project left to vouch for: forget the last gate (ticket #23).
+		G.lastGate = null;
 		return { closed: true };
 	},
 
@@ -1551,7 +1560,15 @@ const commands = {
 					Project.save_path = p.path;
 				}
 				BarItems.save_project.trigger();
-				resolve({ saved: true, path: Project.save_path || null });
+				const result = { saved: true, path: Project.save_path || null };
+				// Advisory done-gate warning (ticket #23): saving never blocks
+				// on gate state. Warn only when a check has run and its most
+				// recent gate did not pass; a passed gate or no prior check
+				// yields no warning.
+				if (G.lastGate && G.lastGate.gate_pass === false) {
+					result.warning = `Done-gate failing: the most recent check_model reported ${G.lastGate.errors} error(s) (gate.gate_pass is false) — fix the reported errors before treating the model as done. The project was still saved.`;
+				}
+				resolve(result);
 			} catch (e) {
 				reject(e);
 			}
@@ -1582,6 +1599,9 @@ const commands = {
 		// (the older .parse signature is what previously failed).
 		Codecs.project.load(data, { path: p.path, content, name: p.path.split(/[\\/]/).pop() });
 		Canvas.updateAll();
+		// A freshly loaded project has never been checked: forget the gate
+		// remembered from whatever was open before (ticket #23).
+		G.lastGate = null;
 		return commands.get_status().project;
 	},
 
@@ -2342,11 +2362,15 @@ const commands = {
 
 		const byType = {};
 		issues.forEach((i) => { byType[i.issue] = (byType[i.issue] || 0) + 1; });
+		// Remember the gate for save_project's advisory warning (ticket #23):
+		// snapshot the counts so later calls can't mutate the stored summary.
+		const gate = summarizeGate(issues);
+		G.lastGate = { errors: gate.errors, warnings: gate.warnings, gate_pass: gate.gate_pass };
 		return {
 			cubes: Cube.all.length, groups: Group.all.length, textures: Texture.all.length,
 			texture_size: [tw, th], animation_format: animMode,
 			issue_count: issues.length, by_type: byType, issues,
-			gate: summarizeGate(issues),
+			gate,
 		};
 	},
 

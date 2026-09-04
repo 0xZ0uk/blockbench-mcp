@@ -231,7 +231,7 @@ export const tools: ToolDef[] = [
   forward("close_project", "Close the currently open project.", obj({})),
   forward(
     "save_project",
-    "Save the open project as a .bbmodel. Provide `path` to save to a specific file (desktop), otherwise Blockbench's save flow is used.",
+    "Save the open project as a .bbmodel. Provide `path` to save to a specific file (desktop), otherwise Blockbench's save flow is used. Done-gate is advisory only: when the most recent check_model gate did not pass (gate.gate_pass false), the result also carries a `warning` naming the error count — saving itself never fails or blocks on gate state, and there is no warning when the gate passed or no check has run.",
     obj({ path: { type: "string", description: "Absolute file path to save to (optional)." } })
   ),
   forward(
