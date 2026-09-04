@@ -312,6 +312,46 @@ function sceneBounds() {
 	return { center, size };
 }
 
+/** Name a [x,y,z] triple so axes are unambiguous over the bridge. */
+function namedVec(v) {
+	return { x: v[0], y: v[1], z: v[2] };
+}
+
+/**
+ * Axis-aligned bounding box over cubes with from/to, in model units.
+ * Shared mechanics for measure element/group/model modes: callers own
+ * ref resolution and error classification, this owns only the union math.
+ * Returns null when there is nothing to measure; otherwise
+ * {min, max, size, center} with named {x,y,z} axes.
+ */
+function bboxOfCubes(cubes) {
+	const list = (cubes || []).filter((c) => c && Array.isArray(c.from) && Array.isArray(c.to));
+	if (!list.length) return null;
+	let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+	list.forEach((c) => {
+		for (let i = 0; i < 3; i++) {
+			min[i] = Math.min(min[i], c.from[i], c.to[i]);
+			max[i] = Math.max(max[i], c.from[i], c.to[i]);
+		}
+	});
+	const size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+	const center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
+	return { min: namedVec(min), max: namedVec(max), size: namedVec(size), center: namedVec(center) };
+}
+
+/** All descendant cubes of a group/bone, including nested groups. */
+function collectGroupCubes(group) {
+	const out = [];
+	(function walk(node) {
+		(node.children || []).forEach((child) => {
+			if (typeof Group !== 'undefined' && child instanceof Group) walk(child);
+			else if (child && Array.isArray(child.from) && Array.isArray(child.to)) out.push(child);
+			else if (child && Array.isArray(child.children)) walk(child);
+		});
+	})(group);
+	return out;
+}
+
 /** Fallback camera placement by angle name when no matching preset exists. */
 function applyAngleName(preview, name) {
 	const { center, size } = sceneBounds();
@@ -1577,6 +1617,64 @@ const commands = {
 		const el = findNode(p.element || p.uuid || p.name);
 		if (!el) throw new Error('Element not found: ' + (p.element || p.uuid || p.name));
 		return el instanceof Group ? serializeGroup(el, true) : serializeElement(el);
+	},
+
+	// Measure verifiable dimensions in model units with named axes.
+	// Modes: element (one cube), group (group/bone including children),
+	// model (overall dims, no manual aggregation). Boxes are the
+	// axis-aligned union of cube from/to; rotation is not expanded.
+	measure(p) {
+		requireProject();
+		const mode = p.mode;
+		if (!mode) throw new Error('Field "mode" is required (element|group|model).');
+		if (mode === 'element') {
+			const ref = p.element;
+			if (!ref) throw new Error('Field "element" (name|uuid) is required for mode "element".');
+			const el = findElement(ref);
+			if (!el) throw new Error('Field "element" not found: ' + ref);
+			if (typeof Group !== 'undefined' && el instanceof Group)
+				throw new Error('Field "element" is a group; use mode "group" with field "group".');
+			if (!Array.isArray(el.from) || !Array.isArray(el.to))
+				throw new Error('Field "element" has no bounding box: ' + ref);
+			const box = bboxOfCubes([el]);
+			return Object.assign(
+				{ mode: 'element', units: 'model', element: { name: el.name, uuid: el.uuid }, cube_count: 1 },
+				box
+			);
+		}
+		if (mode === 'group') {
+			const ref = p.group;
+			if (!ref) throw new Error('Field "group" (name|uuid) is required for mode "group".');
+			const g = findGroup(ref);
+			if (!g) throw new Error('Field "group" not found: ' + ref);
+			const cubes = collectGroupCubes(g);
+			if (!cubes.length) throw new Error('Field "group" has no measurable cubes: ' + ref);
+			const box = bboxOfCubes(cubes);
+			return Object.assign(
+				{
+					mode: 'group', units: 'model',
+					group: { name: g.name, uuid: g.uuid },
+					cube_count: cubes.length, cubes: cubes.map((c) => ({ name: c.name, uuid: c.uuid })),
+				},
+				box
+			);
+		}
+		if (mode === 'model') {
+			const cubes = Cube.all.slice();
+			const groups = typeof Group !== 'undefined' ? Group.all.length : 0;
+			const box = bboxOfCubes(cubes);
+			if (!box) {
+				return {
+					mode: 'model', units: 'model', cube_count: 0, group_count: groups,
+					min: null, max: null, size: namedVec([0, 0, 0]), center: null,
+				};
+			}
+			return Object.assign(
+				{ mode: 'model', units: 'model', cube_count: cubes.length, group_count: groups },
+				box
+			);
+		}
+		throw new Error('Field "mode" must be one of "element", "group", "model" (got ' + JSON.stringify(mode) + ').');
 	},
 
 	// Audit the model for common problems that make results look broken: faces

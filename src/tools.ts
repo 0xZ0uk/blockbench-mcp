@@ -379,6 +379,22 @@ export const tools: ToolDef[] = [
     "Get detailed info for one cube or group by uuid or name.",
     obj({ element: { type: "string" } }, ["element"])
   ),
+  forward(
+    "measure",
+    "Measure verifiable dimensions in model units with named axes (x/y/z). Modes: element (one cube's bounding box — e.g. verify 'slide length = 24'), group (bounding box of a group/bone including all descendant cubes — e.g. slide assembly dims in one call), model (overall model dims, no manual aggregation). Element/group refs are name-or-UUID like get_element. Boxes are the axis-aligned union of cube from/to (rotation is not expanded — matches the viewport's axis readout for unrotated precision parts). Returns {mode, units:'model', min/max/size/center with {x,y,z}} plus the resolved ref and cube_count (group results also list the composed cubes as {name, uuid} so follow-up calls stay addressable). Edge cases: an empty model returns min/max/center null with size {x:0,y:0,z:0} and cube_count 0; a group with no measurable cubes returns a field-named error for \"group\".",
+    obj(
+      {
+        mode: {
+          type: "string",
+          enum: ["element", "group", "model"],
+          description: "What to measure: 'element' needs `element`, 'group' needs `group`, 'model' needs neither.",
+        },
+        element: { type: "string", description: "uuid or name of the cube to measure (mode 'element')." },
+        group: { type: "string", description: "uuid or name of the group/bone to measure including children (mode 'group')." },
+      },
+      ["mode"]
+    )
+  ),
 
   // ===== UV & textures on faces ============================================
   forward(
