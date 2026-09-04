@@ -37,6 +37,11 @@ export const SCANNED_DOCS = [
   "skills/blockbench-modeling/references/modeling-scripts.md",
   "skills/blockbench-texturing/references/texturing-scripts.md",
   "skills/blockbench-animation/references/animation-scripts.md",
+  "commands/plan-model.md",
+  "commands/silhouette-review.md",
+  "commands/bake-texture.md",
+  "commands/export-model.md",
+  "commands/pose-preview.md",
 ];
 
 /**

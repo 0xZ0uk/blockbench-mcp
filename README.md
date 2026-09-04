@@ -177,6 +177,14 @@ Each folder is self-contained (`SKILL.md` + `references/`). Point the client at 
 folder (or zip it yourself, e.g. `zip -r blockbench-modeling.zip blockbench-modeling/`
 from `skills/`). See `skills/INSTALL.md`.
 
+Custom commands (OpenCode): `commands/` ships `/plan-model`,
+`/silhouette-review`, `/bake-texture`, `/export-model`, and `/pose-preview`
+(provisional) — thin drivers over these skills that enforce the methodology gates
+(written plan before geometry, 4+ angle silhouette check, flat-first bake, done-gate
+before export). Install by copying the files into `.opencode/commands/` (project) or
+`~/.config/opencode/commands/` (global), then run e.g. `/plan-model …`; the commands
+reference the skills, they do not restate them.
+
 ## Tool reference
 
 | Group | Tools |

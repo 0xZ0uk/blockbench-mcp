@@ -69,6 +69,18 @@ test("doc refs: the scan list covers every skill doc on disk", () => {
   }
 });
 
+test("doc refs: the scan list covers every OpenCode command on disk", () => {
+  const cmdDir = join(repoRoot, "commands");
+  const onDisk = readdirSync(cmdDir)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => join("commands", f));
+  assert.ok(onDisk.length > 0, "commands/ must ship at least one custom command");
+  const scanned = new Set(SCANNED_DOCS);
+  for (const f of onDisk) {
+    assert.ok(scanned.has(f), `${f} exists on disk but is not in SCANNED_DOCS — new commands must join the guard`);
+  }
+});
+
 test("docs: opencode.json skills.paths entries exist and cover all four skills (ticket #52)", () => {
   const config = JSON.parse(readFileSync(join(repoRoot, "opencode.json"), "utf8"));
   const paths = (config && config.skills && config.skills.paths) || [];
