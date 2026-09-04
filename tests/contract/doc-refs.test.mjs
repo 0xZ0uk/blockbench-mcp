@@ -69,6 +69,27 @@ test("doc refs: the scan list covers every skill doc on disk", () => {
   }
 });
 
+test("docs: opencode.json skills.paths entries exist and cover all four skills (ticket #52)", () => {
+  const config = JSON.parse(readFileSync(join(repoRoot, "opencode.json"), "utf8"));
+  const paths = (config && config.skills && config.skills.paths) || [];
+  assert.ok(
+    paths.length > 0,
+    "opencode.json must declare skills.paths so the four skills resolve in OpenCode without manual folder copying"
+  );
+  /** @type {Set<string>} */
+  const covered = new Set();
+  for (const p of paths) {
+    const abs = join(repoRoot, p);
+    assert.ok(existsSync(abs), `opencode.json skills.paths entry ${JSON.stringify(p)} does not exist from the repo root`);
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      if (entry.isDirectory() && existsSync(join(abs, entry.name, "SKILL.md"))) covered.add(entry.name);
+    }
+  }
+  for (const name of ["blockbench-mcp", "blockbench-modeling", "blockbench-texturing", "blockbench-animation"]) {
+    assert.ok(covered.has(name), `${name}/SKILL.md is not reachable via opencode.json skills.paths`);
+  }
+});
+
 test("doc refs: the tool-word allowlist can never shadow a real tool id", () => {
   const valid = new Set(registry);
   const collision = [...TOOL_WORD_ALLOWLIST].filter((w) => valid.has(w));
