@@ -22,6 +22,7 @@ It was used to model, texture and animate a full GeckoLib grizzly bear (walk / r
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Connecting your AI client](#connecting-your-ai-client)
+- [Skills](#skills)
 - [Tool reference](#tool-reference)
 - [Example: an animated GeckoLib bear](#example-an-animated-geckolib-bear)
 - [Troubleshooting](#troubleshooting)
@@ -63,7 +64,7 @@ There are two pieces:
 
 - **Blockbench desktop app**, version **4.8+** (the web app cannot host the bridge — see [Limitations](#limitations)).
 - **Node.js 18+** (for global `fetch`).
-- An MCP-capable client (Claude Code, Claude Desktop, Cursor, etc.).
+- An MCP-capable client (Claude Code, Claude Desktop, OpenCode, Cursor, etc.).
 
 ## Installation
 
@@ -87,7 +88,7 @@ curl http://127.0.0.1:8787/ping
 ### 2. Build the MCP server
 
 ```bash
-git clone https://github.com/sosadly/blockbench-mcp.git
+git clone https://github.com/0xZ0uk/blockbench-mcp.git
 cd blockbench-mcp
 npm install
 npm run build
@@ -173,17 +174,40 @@ agent — they are not required for the MCP itself:
 | `blockbench-texturing` | Texturing/UV work | `pack_uv` discipline, smooth bake, palettes, glow cores, feature painting |
 | `blockbench-animation` | Rigging/animating | Joint pivots, rotation signs, walk/run/attack/idle recipes, export hygiene |
 
-Each folder is self-contained (`SKILL.md` + `references/`). Point the client at the
-folder (or zip it yourself, e.g. `zip -r blockbench-modeling.zip blockbench-modeling/`
-from `skills/`). See `skills/INSTALL.md`.
+Each folder is self-contained (`SKILL.md` plus `references/` where listed). Copy the folder(s)
+into your client's skill directory. See `skills/INSTALL.md` for the per-client paths and the
+update flow.
 
-Custom commands (OpenCode): `commands/` ships `/plan-model`,
-`/silhouette-review`, `/bake-texture`, `/export-model`, and `/pose-preview`
-(provisional) — thin drivers over these skills that enforce the methodology gates
-(written plan before geometry, 4+ angle silhouette check, flat-first bake, done-gate
-before export). Install by copying the files into `.opencode/commands/` (project) or
-`~/.config/opencode/commands/` (global), then run e.g. `/plan-model …`; the commands
-reference the skills, they do not restate them.
+### OpenCode: install → skills resolve → commands work
+
+OpenCode needs no manual skill copying — the repo already wires all three layers:
+
+1. **MCP server** — `opencode.json` in the repo root launches `dist/index.js` over stdio with
+`BLOCKBENCH_MCP_PORT` set to `8787` (same port as the bridge plugin). Build first
+(`npm run build`), open Blockbench with the bridge running, and the `blockbench` server
+connects. Under OpenCode the tools surface as `blockbench_get_status`
+instead of Claude's `mcp__blockbench__get_status` — see [AGENTS.md](AGENTS.md) for the mapping.
+2. **Skills resolve** — `opencode.json` declares a `skills/` path pointing at `skills/`, so all four
+skills (`skills/blockbench-mcp/SKILL.md`, `skills/blockbench-modeling/SKILL.md`,
+`skills/blockbench-texturing/SKILL.md`, `skills/blockbench-animation/SKILL.md`) resolve
+without copying. Confirm the skill listing shows them, then invoke one — it
+loads its `SKILL.md` and drives a real tool call such as `get_status`.
+3. **Commands work** — `commands/` ships `/plan-model`, `/silhouette-review`, `/bake-texture`,
+`/export-model`, and `/pose-preview` (provisional) — thin drivers over these skills that enforce
+the methodology gates (written plan before geometry, 4+ angle silhouette check, flat-first bake,
+done-gate before export). Install by copying the files into `.opencode/commands/` (project) or
+`~/.config/opencode/commands/` (global), then run e.g. `/plan-model …`:
+
+```bash
+cp commands/*.md .opencode/commands/
+```
+
+The commands reference the skills, they do not restate them.
+
+First-use flow: `/plan-model` (written plan before any geometry) → build → `/silhouette-review`
+(4+ angle check) → `/bake-texture` (smooth-bake → export path) → `/export-model` (refuses past a
+failing done-gate `check_model`). `/pose-preview` stays provisional until the acceptance run
+decides keep/drop.
 
 ## Tool reference
 
