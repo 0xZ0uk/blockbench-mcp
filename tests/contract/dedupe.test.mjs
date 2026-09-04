@@ -155,6 +155,18 @@ test("add_cubes dedupe: fresh names still create, without an updated flag", () =
   assert.equal(res.cubes[0].name, "fresh");
 });
 
+test("add_cubes dedupe: partial spec patches only provided fields", () => {
+  reset([{ name: "slide-a", from: [0, 0, 0], to: [4, 2, 4] }]);
+  const res = commands.add_cubes({
+    dedupe_by_name: true,
+    cubes: [{ name: "slide-a", from: [10, 0, 0] }],
+  });
+  assert.equal(res.updated, 1);
+  assert.equal(sb.Outliner.elements.length, 1);
+  assert.deepEqual(plain(sb.Cube.all[0].from), [10, 0, 0]);
+  assert.deepEqual(plain(sb.Cube.all[0].to), [4, 2, 4], "missing `to` must not reset geometry");
+});
+
 test("add_cubes dedupe: only same-kind matches update (group name does not block a cube)", () => {
   reset([], ["slide-a"]);
   const res = commands.add_cubes({
