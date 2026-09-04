@@ -1503,7 +1503,7 @@ const commands = {
 				const el = findNode(ref);
 				if (!el) throw new Error('Element not found: ' + ref);
 				const patch = (item.patch && typeof item.patch === 'object') ? item.patch : {};
-				// Validate failure-prone inputs BEFORE mutating, so a bad
+				// Validate parent existence BEFORE mutating, so a not-found
 				// parent leaves the element untouched (per-item isolation).
 				let parent = null, reparent = false;
 				if (patch.parent !== undefined) {
@@ -1538,8 +1538,8 @@ const commands = {
 	// own ok/error so one bad reference never voids the batch.
 	delete_elements(p) {
 		requireProject();
-		const refs = Array.isArray(p.elements) ? p.elements : (p.element ? toList(p.element) : null);
-		if (!Array.isArray(refs) || !refs.length) throw new Error('elements (array) is required');
+		const refs = Array.isArray(p.elements) ? p.elements : null;
+		if (!refs || !refs.length) throw new Error('elements (array) is required');
 		// Snapshot cubes upfront so Undo restores deleted cubes (mirrors the
 		// single-form {elements:[el]} coverage for bulk; outliner:true covers groups/tree).
 		const undoCubes = [];
