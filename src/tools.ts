@@ -448,8 +448,8 @@ export const tools: ToolDef[] = [
     closedObj({
       regex: { type: "string", description: "Case-insensitive regex tested against element/group names." },
       parent: { type: "string", description: "Direct parent group, by uuid or name; only its own children are returned." },
-      limit: { type: "number", description: "Positive integer; max refs on this page (default: all matches)." },
-      offset: { type: "number", description: "Non-negative integer; number of matches to skip (default 0)." },
+      limit: { type: "integer", description: "Positive integer; max refs on this page (default: all matches)." },
+      offset: { type: "integer", description: "Non-negative integer; number of matches to skip (default 0)." },
     })
   ),
   forward(

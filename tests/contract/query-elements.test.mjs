@@ -156,6 +156,34 @@ test("query_elements: total counts matches BEFORE pagination", () => {
   assert.equal(q.offset, 2);
 });
 
+test("query_elements: refs are usable verbatim as edit/measure targets", () => {
+  seed();
+  const q = commands.query_elements({ regex: "Right Leg" });
+  assert.equal(q.refs.length, 1);
+  // Cube ref -> measure mode "element" resolves the very same uuid.
+  const box = commands.measure({ mode: "element", element: q.refs[0].uuid });
+  assert.equal(plain(box.element).uuid, q.refs[0].uuid);
+  assert.equal(plain(box.element).name, "Right Leg");
+  // Group ref -> measure mode "group" resolves the same uuid incl. descendants.
+  const g = commands.query_elements({ regex: "^legs$" });
+  const gbox = commands.measure({ mode: "group", group: g.refs[0].uuid });
+  assert.equal(plain(gbox.group).uuid, g.refs[0].uuid);
+  assert.equal(gbox.cube_count, 2, "legs bone: its own cube + the nested lower_leg cube");
+});
+
+test("query_elements: flat fallback (no Outliner.root) lists groups+elements without duplication", () => {
+  seed();
+  sb.Outliner.root = [];
+  try {
+    const q = commands.query_elements({});
+    const uuids = new Set(plain(q.refs).map((r) => r.uuid));
+    assert.equal(q.total, sb.Group.all.length + sb.Outliner.elements.length);
+    assert.equal(uuids.size, q.total, "no node appears twice");
+  } finally {
+    seed();
+  }
+});
+
 test("query_elements: errors name the offending field", () => {
   seed();
   assert.throws(() => commands.query_elements({ regex: "(unclosed" }), /Field "regex"/);

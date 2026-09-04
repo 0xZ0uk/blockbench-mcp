@@ -1949,6 +1949,7 @@ const commands = {
 		}
 		let matches = nodes;
 		if (p.regex != null) {
+			if (typeof p.regex !== 'string') throw new Error('Field "regex" must be a string.');
 			let re;
 			try {
 				re = new RegExp(p.regex, 'i');
@@ -1958,20 +1959,23 @@ const commands = {
 			matches = matches.filter((n) => re.test(n.name || ''));
 		}
 		if (p.parent != null) {
+			if (typeof p.parent !== 'string') throw new Error('Field "parent" must be a string.');
 			const g = findGroup(p.parent);
 			if (!g) throw new Error('Field "parent" not found: ' + p.parent);
+			// Identity match covers live Blockbench; the uuid fallback covers
+			// cross-realm/stub copies of the same group object.
 			matches = matches.filter((n) => n.parent === g || (n.parent && n.parent !== 'root' && n.parent.uuid === g.uuid));
 		}
 		const total = matches.length;
 		let offset = 0;
 		if (p.offset != null) {
-			offset = Number(p.offset);
-			if (!Number.isInteger(offset) || offset < 0) throw new Error('Field "offset" must be a non-negative integer.');
+			offset = p.offset;
+			if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) throw new Error('Field "offset" must be a non-negative integer.');
 		}
 		let limit = Infinity;
 		if (p.limit != null) {
-			limit = Number(p.limit);
-			if (!Number.isInteger(limit) || limit < 1) throw new Error('Field "limit" must be a positive integer.');
+			limit = p.limit;
+			if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) throw new Error('Field "limit" must be a positive integer.');
 		}
 		const refs = matches
 			.slice(offset)
