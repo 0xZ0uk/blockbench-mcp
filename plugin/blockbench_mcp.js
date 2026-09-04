@@ -1477,6 +1477,96 @@ const commands = {
 		return { deleted: true };
 	},
 
+	// Bulk edit: one call applies a batch of element patches. Each item
+	// resolves by name-or-UUID exactly like edit_element (including 'root'
+	// parent semantics) and reports its own ok/error so one bad reference
+	// never voids the batch.
+	edit_elements(p) {
+		requireProject();
+		if (!Array.isArray(p.edits) || !p.edits.length) throw new Error('edits (array) is required');
+		// Snapshot cubes upfront so Undo restores geometry/property changes
+		// (outliner:true alone only covers tree structure; mirrors the
+		// single-form {elements:[el]}/{group:el} coverage for bulk).
+		const undoCubes = [];
+		for (const item of p.edits) {
+			const ref = item && (item.element || item.uuid || item.name);
+			const el = ref ? findNode(ref) : null;
+			if (el && !(el instanceof Group) && undoCubes.indexOf(el) < 0) undoCubes.push(el);
+		}
+		Undo.initEdit({ outliner: true, elements: undoCubes });
+		const results = [];
+		let edited = 0;
+		for (const item of p.edits) {
+			const ref = item && (item.element || item.uuid || item.name);
+			try {
+				if (!ref) throw new Error('Each edit needs `element` (uuid or name).');
+				const el = findNode(ref);
+				if (!el) throw new Error('Element not found: ' + ref);
+				const patch = (item.patch && typeof item.patch === 'object') ? item.patch : {};
+				// Validate parent existence BEFORE mutating, so a not-found
+				// parent leaves the element untouched (per-item isolation).
+				let parent = null, reparent = false;
+				if (patch.parent !== undefined) {
+					reparent = true;
+					parent = patch.parent === 'root' ? 'root' : findGroup(patch.parent);
+					if (patch.parent !== 'root' && !parent) throw new Error('Parent group not found: ' + patch.parent);
+				}
+				const isGroup = el instanceof Group;
+				if (patch.new_name !== undefined) el.name = patch.new_name;
+				if (patch.origin) el.origin = num3(patch.origin, el.origin);
+				if (patch.rotation) el.rotation = num3(patch.rotation, el.rotation);
+				if (!isGroup) {
+					if (patch.from) el.from = num3(patch.from, el.from);
+					if (patch.to) el.to = num3(patch.to, el.to);
+					if (patch.inflate !== undefined) el.inflate = Number(patch.inflate);
+				}
+				if (patch.visibility !== undefined) el.visibility = !!patch.visibility;
+				if (reparent) el.addTo(parent);
+				edited++;
+				results.push({ element: ref, ok: true, result: isGroup ? serializeGroup(el) : serializeElement(el) });
+			} catch (e) {
+				results.push({ element: ref || null, ok: false, error: e && e.message ? e.message : String(e) });
+			}
+		}
+		Undo.finishEdit('MCP: edit elements');
+		Canvas.updateAll();
+		return { edited, failed: results.length - edited, results };
+	},
+
+	// Bulk delete: one call deletes a batch of elements. Each reference
+	// resolves by name-or-UUID exactly like delete_element and reports its
+	// own ok/error so one bad reference never voids the batch.
+	delete_elements(p) {
+		requireProject();
+		const refs = Array.isArray(p.elements) ? p.elements : null;
+		if (!refs || !refs.length) throw new Error('elements (array) is required');
+		// Snapshot cubes upfront so Undo restores deleted cubes (mirrors the
+		// single-form {elements:[el]} coverage for bulk; outliner:true covers groups/tree).
+		const undoCubes = [];
+		for (const ref of refs) {
+			const el = ref ? findNode(ref) : null;
+			if (el && !(el instanceof Group) && undoCubes.indexOf(el) < 0) undoCubes.push(el);
+		}
+		Undo.initEdit({ outliner: true, elements: undoCubes });
+		const results = [];
+		let deleted = 0;
+		for (const ref of refs) {
+			try {
+				if (!ref) throw new Error('Each entry needs an element uuid or name.');
+				const el = findNode(ref);
+				if (!el) throw new Error('Element not found: ' + ref);
+				el.remove(false);
+				deleted++;
+				results.push({ element: ref, ok: true, deleted: true });
+			} catch (e) {
+				results.push({ element: ref || null, ok: false, error: e && e.message ? e.message : String(e) });
+			}
+		}
+		Undo.finishEdit('MCP: delete elements');
+		Canvas.updateAll();
+		return { deleted, failed: results.length - deleted, results };
+	},
+
 	list_outliner() {
 		requireProject();
 		return outlinerTree();

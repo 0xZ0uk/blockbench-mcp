@@ -86,6 +86,58 @@ test("handler result: bridge errors surface with the offending field named", asy
   });
 });
 
+test("handler result: edit_elements keeps per-item ok/error (partial failure safe)", async () => {
+  const editElements = tools.find((t) => t.name === "edit_elements");
+  assert.ok(editElements, "edit_elements must exist");
+  const bridgeResult = {
+    edited: 1,
+    failed: 1,
+    results: [
+      { element: "slide", ok: true, result: { uuid: "cube-1", name: "slide" } },
+      { element: "missing-part", ok: false, error: "Element not found: missing-part" },
+    ],
+  };
+  await withFakeBridge({ edit_elements: { result: bridgeResult } }, async () => {
+    const blocks = await editElements.handler({
+      edits: [
+        { element: "slide", patch: { to: [24, 4, 4] } },
+        { element: "missing-part", patch: { rotation: [0, 0, 0] } },
+      ],
+    });
+    assert.equal(blocks[0].type, "text");
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.edited, 1);
+    assert.equal(parsed.failed, 1);
+    assert.ok(Array.isArray(parsed.results));
+    assert.equal(parsed.results.length, 2);
+    assert.equal(parsed.results[0].ok, true);
+    assert.equal(parsed.results[1].ok, false);
+    assert.match(parsed.results[1].error, /missing-part/);
+  });
+});
+
+test("handler result: delete_elements keeps per-item ok/error (partial failure safe)", async () => {
+  const deleteElements = tools.find((t) => t.name === "delete_elements");
+  assert.ok(deleteElements, "delete_elements must exist");
+  const bridgeResult = {
+    deleted: 1,
+    failed: 1,
+    results: [
+      { element: "slide", ok: true, deleted: true },
+      { element: "nope", ok: false, error: "Element not found: nope" },
+    ],
+  };
+  await withFakeBridge({ delete_elements: { result: bridgeResult } }, async () => {
+    const blocks = await deleteElements.handler({ elements: ["slide", "nope"] });
+    assert.equal(blocks[0].type, "text");
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.deleted, 1);
+    assert.equal(parsed.failed, 1);
+    assert.equal(parsed.results[0].ok, true);
+    assert.equal(parsed.results[1].ok, false);
+  });
+});
+
 /**
  * Stub the bridge transport (global fetch) so handlers return canned
  * results without a live Blockbench. Restores the real fetch afterwards.

@@ -325,6 +325,51 @@ export const tools: ToolDef[] = [
     obj({ element: { type: "string", description: "uuid or name." } }, ["element"])
   ),
   forward(
+    "edit_elements",
+    "Edit many cubes/groups in one call — the fast way to apply a batch of tweaks (e.g. a 20-nudge fix loop on a slide or grip costs one round trip). Pass `edits`: an array of {element, patch} where `element` is a uuid or name (same resolution as edit_element) and `patch` takes the same fields as edit_element ({new_name, from, to, origin, rotation, inflate, visibility, parent}; `parent` accepts a group uuid/name or 'root'). Returns per-item results [{element, ok, result|error}] so one bad reference never voids the batch.",
+    obj(
+      {
+        edits: {
+          type: "array",
+          description: "Array of {element, patch} items (each like edit_element's args nested under patch).",
+          minItems: 1,
+          items: obj(
+            {
+              element: { type: "string", description: "uuid or name of the cube/group to edit." },
+              patch: obj({
+                new_name: { type: "string" },
+                from: vec3("New lower corner (cubes only)."),
+                to: vec3("New upper corner (cubes only)."),
+                origin: vec3("New pivot."),
+                rotation: vec3("New rotation in degrees."),
+                inflate: { type: "number" },
+                visibility: { type: "boolean" },
+                parent: { type: "string", description: "uuid/name of new parent group, or 'root'." },
+              }),
+            },
+            ["element", "patch"]
+          ),
+        },
+      },
+      ["edits"]
+    )
+  ),
+  forward(
+    "delete_elements",
+    "Delete many cubes/groups (and their children) in one call. Pass `elements`: an array of uuids/names (same resolution as delete_element). Returns per-item results [{element, ok, deleted|error}] so one bad reference never voids the batch.",
+    obj(
+      {
+        elements: {
+          type: "array",
+          description: "Array of cube/group uuids or names to delete.",
+          minItems: 1,
+          items: { type: "string" },
+        },
+      },
+      ["elements"]
+    )
+  ),
+  forward(
     "list_outliner",
     "Return the full outliner tree (groups/bones and their nested cubes) with uuids, origins and rotations.",
     obj({})
