@@ -12,7 +12,7 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 32 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 47 pass / 0 fail).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -31,7 +31,11 @@ never leave it to lie.
   check_model` (needs an open project for real data; stubbed in the
   contract suite). Drive: call with `{}`. Proved when: result parses to
   `{issue_count, by_type, issues[]}` with per-issue `issue` names
-  (`no_texture`, `coplanar_overlap`, …).
+  (`no_texture`, `coplanar_overlap`, …). Each issue may carry an optional
+  `fix` patch `{element, issue, tool, fix}` whose `fix` is directly usable
+  as args to the named tool (table-driven + schema-replayed by
+  `tests/contract/fixpatches.test.mjs`); `fix` is omitted when no safe
+  patch can be derived.
 - [ ] **Bulk edit/delete (`edit_elements` / `delete_elements`, stubbed)** — Reach: MCP
   `tools/call edit_elements` / `delete_elements` with the bridge stubbed (contract suite)
   or an owned stdio server over in-memory transport. Drive: call with
