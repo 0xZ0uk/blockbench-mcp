@@ -6,13 +6,13 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-  or a one-off stdio script. Proved when: response lists 48 tools including
+  or a one-off stdio script. Proved when: response lists 49 tools including
   `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
-  `edit_elements`, `delete_elements`.
+  `edit_elements`, `delete_elements`, `measure`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 11 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 13 pass / 0 fail).
 - [ ] **Bridge status (read-only, shared-safe)** — Reach:
   `curl -s http://127.0.0.1:8787/ping` plus `get_status` over the bridge.
   Drive: curl, or MCP `tools/call get_status` with an owned stdio server.
@@ -30,6 +30,17 @@ never leave it to lie.
   Proved when: result parses to `{edited|deleted, failed, results[]}` with per-item
   `{element, ok:true, result|deleted}` vs `{element, ok:false, error}` and `isError` false.
   Live-Blockbench mutation stays owned-instance only — record `untested + reason` without one.
+- [ ] **Measure dims (`measure`, read-only)** — Reach: MCP `tools/call
+  measure` (needs an open project for live numbers; stubbed in the
+  contract suite). Drive: call `{mode:"element",element:"<name>"}`,
+  `{mode:"group",group:"<name>"}`, `{mode:"model"}`. Proved when: each
+  result parses to `{mode, units:"model", min/max/size/center with {x,y,z}}`
+  plus the resolved ref and `cube_count` (group adds `cubes[]` of
+  `{name, uuid}`, model adds `group_count`). Empty model returns `min`/`max`/`center` null with
+  `size` `{x:0,y:0,z:0}` and `cube_count` 0; empty group errors naming
+  `group`. On an owned instance also cover: a cube with swapped `from`/`to`,
+  a nested group (grandchild cubes included), an empty group, and an empty
+  model.
 - [ ] **Visual review (`screenshot_views`, owned-instance only)** — Reach:
   MCP `tools/call screenshot_views` against a Blockbench you started with
   an open project. Drive: call with default views, save returned PNGs to

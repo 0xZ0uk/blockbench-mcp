@@ -138,6 +138,55 @@ test("handler result: delete_elements keeps per-item ok/error (partial failure s
   });
 });
 
+test("handler result: measure keeps named-axes dims for element, group, and model", async () => {
+  const measure = tools.find((t) => t.name === "measure");
+  assert.ok(measure, "measure must exist");
+  const elementBox = {
+    mode: "element", units: "model", element: { name: "slide", uuid: "cube-1" }, cube_count: 1,
+    min: { x: -12, y: 0, z: 0 }, max: { x: 12, y: 4, z: 4 },
+    size: { x: 24, y: 4, z: 4 }, center: { x: 0, y: 2, z: 2 },
+  };
+  const groupBox = {
+    mode: "group", units: "model", group: { name: "slide", uuid: "group-1" },
+    cube_count: 2, cubes: [{ name: "slide-a", uuid: "cube-a" }, { name: "slide-b", uuid: "cube-b" }],
+    min: { x: 0, y: 0, z: 0 }, max: { x: 4, y: 2, z: 8 },
+    size: { x: 4, y: 2, z: 8 }, center: { x: 2, y: 1, z: 4 },
+  };
+  const modelBox = {
+    mode: "model", units: "model", cube_count: 2, group_count: 1,
+    min: { x: -12, y: 0, z: 0 }, max: { x: 12, y: 4, z: 8 },
+    size: { x: 24, y: 4, z: 8 }, center: { x: 0, y: 2, z: 4 },
+  };
+  await withFakeBridge({ measure: { result: elementBox } }, async () => {
+    const blocks = await measure.handler({ mode: "element", element: "slide" });
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.units, "model");
+    assert.deepEqual(parsed.size, { x: 24, y: 4, z: 4 });
+    assert.deepEqual(Object.keys(parsed.min).sort(), ["x", "y", "z"]);
+  });
+  await withFakeBridge({ measure: { result: groupBox } }, async () => {
+    const blocks = await measure.handler({ mode: "group", group: "slide" });
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.cube_count, 2);
+    assert.deepEqual(parsed.size, { x: 4, y: 2, z: 8 });
+    assert.deepEqual(parsed.cubes, [{ name: "slide-a", uuid: "cube-a" }, { name: "slide-b", uuid: "cube-b" }]);
+  });
+  await withFakeBridge({ measure: { result: modelBox } }, async () => {
+    const blocks = await measure.handler({ mode: "model" });
+    const parsed = JSON.parse(blocks[0].text);
+    assert.equal(parsed.cube_count, 2);
+    assert.deepEqual(parsed.size, { x: 24, y: 4, z: 8 });
+  });
+});
+
+test("handler result: measure bridge errors name the offending field", async () => {
+  const measure = tools.find((t) => t.name === "measure");
+  assert.ok(measure, "measure must exist");
+  await withFakeBridge({ measure: { error: 'Field "element" (name|uuid) is required for mode "element".' } }, async () => {
+    await assert.rejects(() => measure.handler({ mode: "element" }), /element/);
+  });
+});
+
 /**
  * Stub the bridge transport (global fetch) so handlers return canned
  * results without a live Blockbench. Restores the real fetch afterwards.

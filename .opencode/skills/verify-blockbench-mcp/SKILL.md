@@ -61,13 +61,13 @@ preference:
    bridge stubbed. This is the gate for precision-ticket changes.
 2. **MCP stdio (your code, your process):** spawn `node dist/index.js`,
    send JSON-RPC `initialize` then `tools/list`, assert the catalogue
-   (currently 46 tools). Example drive script pattern: spawn with piped
+   (currently 49 tools). Example drive script pattern: spawn with piped
    stdio, write `{"jsonrpc":"2.0","id":1,"method":"initialize",...}` then
    `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`, read the
    `tools` array on stdout. Kill your PID after.
 3. **Bridge read-only (shared-safe):** `get_status`, `list_formats`,
-   `check_model`, `list_outliner` change nothing and may run against a
-   shared instance for observation only.
+   `check_model`, `list_outliner`, `measure` change nothing and may run
+   against a shared instance for observation only.
 4. **Bridge mutating (owned-instance only):** `new_project`, `add_cube(s)`,
    `paint_*`, `screenshot*`, `execute_script` — only against a Blockbench
    you started. Never against PID 3107511-style shared renderers.

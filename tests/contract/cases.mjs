@@ -362,4 +362,33 @@ export const contractCases = [
     expect: "error",
     errorField: "elements",
   },
+
+  // ---- ticket #5: measure bounding boxes and model dims ----
+  // Single-element box, group box incl. children, and overall model dims.
+  {
+    id: "measure-element",
+    ticket: "#5",
+    tool: "measure",
+    args: { mode: "element", element: "slide" },
+    expect: "ok",
+  },
+  { id: "measure-group", ticket: "#5", tool: "measure", args: { mode: "group", group: "slide" }, expect: "ok" },
+  { id: "measure-model", ticket: "#5", tool: "measure", args: { mode: "model" }, expect: "ok" },
+  { id: "measure-missing-mode", ticket: "#5", tool: "measure", args: {}, expect: "error", errorField: "mode" },
+  {
+    id: "measure-bad-mode",
+    ticket: "#5",
+    tool: "measure",
+    args: { mode: "bogus" },
+    expect: "error",
+    errorField: "mode",
+  },
+  {
+    id: "measure-element-type",
+    ticket: "#5",
+    tool: "measure",
+    args: { mode: "element", element: 123 },
+    expect: "error",
+    errorField: "element",
+  },
 ];
