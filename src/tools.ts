@@ -18,6 +18,23 @@ export interface ToolDef {
   handler: (args: Record<string, any>) => Promise<ContentBlock[]>;
 }
 
+/**
+ * Optional structured fix patch attached to a check_model issue (ticket #21).
+ * `tool` names an existing tool and `fix` is directly usable as that tool's
+ * arguments. Patches are proposals only — never auto-applied. Emitted kinds:
+ * coplanar_overlap -> edit_elements (>=0.1 nudge), no_texture -> set_cube_uv
+ * (single project texture, per-face), uv_out_of_bounds -> set_cube_uv (clamp),
+ * degenerate_size -> edit_element (restore 1-unit extent), no_bone_parent ->
+ * edit_element (single existing bone). `fix` is omitted when no safe patch can
+ * be derived (zero-area UVs, ambiguous texture/bone choice).
+ */
+export type FixPatch = {
+  element: string;
+  issue: string;
+  fix: Record<string, unknown>;
+  tool: "edit_element" | "edit_elements" | "set_cube_uv";
+};
+
 // ---- schema helpers --------------------------------------------------------
 const vec3 = (desc: string) => ({
   type: "array",
@@ -279,7 +296,7 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "check_model",
-    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, and Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one another'). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar). Returns a grouped issue list.",
+    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, and Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one another'). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar). Returns a grouped issue list. Each issue may carry a structured `fix` patch {element, issue, tool, fix} whose `fix` is directly usable as arguments to the named tool (edit_element | edit_elements | set_cube_uv) — coplanar_overlap nudges one cube >=0.1 via edit_elements, no_texture assigns the project's single texture to the flagged face via set_cube_uv, uv_out_of_bounds clamps the UV into bounds via set_cube_uv, degenerate_size restores a 1-unit extent via edit_element, no_bone_parent attaches to the project's single bone via edit_element. Patches are proposals only — nothing is auto-applied; `fix` is omitted when no safe patch can be derived (zero-area UVs, ambiguous texture/bone choice).",
     obj({})
   ),
   forward(

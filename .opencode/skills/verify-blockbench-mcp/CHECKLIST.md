@@ -41,7 +41,11 @@ never leave it to lie.
   check_model` (needs an open project for real data; stubbed in the
   contract suite). Drive: call with `{}`. Proved when: result parses to
   `{issue_count, by_type, issues[]}` with per-issue `issue` names
-  (`no_texture`, `coplanar_overlap`, …).
+  (`no_texture`, `coplanar_overlap`, …). Each issue may carry an optional
+  `fix` patch `{element, issue, tool, fix}` whose `fix` is directly usable
+  as args to the named tool (table-driven + schema-replayed by
+  `tests/contract/fixpatches.test.mjs`); `fix` is omitted when no safe
+  patch can be derived.
 - [ ] **Bulk edit/delete (`edit_elements` / `delete_elements`, stubbed)** — Reach: MCP
   `tools/call edit_elements` / `delete_elements` with the bridge stubbed (contract suite)
   or an owned stdio server over in-memory transport. Drive: call with

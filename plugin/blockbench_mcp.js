@@ -408,6 +408,14 @@ function axisOverlap(a1, a2, b1, b2) {
 }
 
 /**
+ * Structured fix patches for check_model issues (proposals only, never
+ * auto-applied). FIX_MIN_SIZE (1): the extent restored on a degenerate axis
+ * so `to - from > 0` without inventing an arbitrary dimension.
+ */
+const FIX_MIN_SIZE = 1;
+const r4 = (n) => Math.round(n * 10000) / 10000;
+
+/**
  * Coplanar-overlap scan over unrotated cubes (the z-fight audit).
  * Returns [{a, b, axis, plane, gap, overlap:{<o1>:n, <o2>:n}}] capped at 80
  * pairs, one entry per pair on the first coplanar axis found.
@@ -2016,27 +2024,82 @@ const commands = {
 	// with no texture (the untextured "gaps"), zero-area or out-of-bounds UVs,
 	// degenerate cube sizes, and (for animated formats) cubes not parented to a
 	// bone. Run this before screenshotting to fix issues proactively.
+	//
+	// Each issue may carry a structured `fix` patch {element, issue, tool, fix}:
+	// `tool` names an existing tool and `fix` is directly usable as that tool's
+	// arguments. Patches are PROPOSALS ONLY — nothing is auto-applied. When no
+	// safe patch can be derived (zero-area UVs, ambiguous texture/bone choice),
+	// `fix` is omitted rather than guessed. Fixes per kind:
+	// - coplanar_overlap: nudge the second cube by OVERLAP_MIN on the reported
+	//   axis via edit_elements (batch form, one edit). NOTE: full-state
+	//   from/to patches don't compose across issues sharing a cube — before
+	//   any auto-apply follow-up, accumulate per-cube deltas instead.
+	// - no_texture: assign the project's single texture to just the flagged face
+	//   via set_cube_uv (per-face, so other faces keep their textures).
+	// - uv_out_of_bounds: clamp the UV rect into [0..tw, 0..th] via set_cube_uv,
+	//   skipped when the clamp would itself be degenerate.
+	// - degenerate_size: restore a 1-unit extent on the flagged axis via
+	//   edit_element (full from/to so the patch is self-contained).
+	// - no_bone_parent: attach to the project's single bone via edit_element.
 	check_model() {
 		requireProject();
 		const tw = Project.texture_width, th = Project.texture_height;
 		const animMode = !!(Format && Format.animation_mode);
+		const singleTexture = Texture.all.length === 1 ? (Texture.all[0].name || Texture.all[0].uuid) : null;
+		const singleBone = Group.all.length === 1 ? (Group.all[0].name || Group.all[0].uuid) : null;
 		const issues = [];
 		Cube.all.forEach((cube) => {
 			for (const dir in cube.faces) {
 				const f = cube.faces[dir];
 				if (!f) continue;
-				if (!f.texture) issues.push({ cube: cube.name, face: dir, issue: 'no_texture' });
+				if (!f.texture) {
+					const issue = { cube: cube.name, face: dir, issue: 'no_texture' };
+					if (singleTexture)
+						issue.fix = {
+							element: cube.name, issue: 'no_texture', tool: 'set_cube_uv',
+							fix: { cube: cube.name, faces: { [dir]: { texture: singleTexture } } },
+						};
+					issues.push(issue);
+				}
 				const u = f.uv || [0, 0, 0, 0];
 				const w = Math.abs(u[2] - u[0]), h = Math.abs(u[3] - u[1]);
-				if (w <= 0 || h <= 0) issues.push({ cube: cube.name, face: dir, issue: 'zero_uv', uv: u });
+				if (w <= 0 || h <= 0) {
+					// Zero-area UV: no safe region to derive, patch stays omitted.
+					issues.push({ cube: cube.name, face: dir, issue: 'zero_uv', uv: u });
+				}
 				else if (Math.max(u[0], u[2]) > tw + 0.01 || Math.max(u[1], u[3]) > th + 0.01 ||
-					Math.min(u[0], u[1], u[2], u[3]) < -0.01)
-					issues.push({ cube: cube.name, face: dir, issue: 'uv_out_of_bounds', uv: u });
+					Math.min(u[0], u[1], u[2], u[3]) < -0.01) {
+					const issue = { cube: cube.name, face: dir, issue: 'uv_out_of_bounds', uv: u };
+					const x1 = Math.min(Math.max(u[0], 0), tw), y1 = Math.min(Math.max(u[1], 0), th);
+					const x2 = Math.min(Math.max(u[2], 0), tw), y2 = Math.min(Math.max(u[3], 0), th);
+					if (Math.abs(x2 - x1) > 0 && Math.abs(y2 - y1) > 0)
+						issue.fix = {
+							element: cube.name, issue: 'uv_out_of_bounds', tool: 'set_cube_uv',
+							fix: { cube: cube.name, faces: { [dir]: { uv: [x1, y1, x2, y2] } } },
+						};
+					issues.push(issue);
+				}
 			}
 			const s = [cube.to[0] - cube.from[0], cube.to[1] - cube.from[1], cube.to[2] - cube.from[2]];
-			if (s[0] <= 0 || s[1] <= 0 || s[2] <= 0) issues.push({ cube: cube.name, issue: 'degenerate_size', size: s });
-			if (animMode && (!cube.parent || cube.parent === 'root'))
-				issues.push({ cube: cube.name, issue: 'no_bone_parent' });
+			if (s[0] <= 0 || s[1] <= 0 || s[2] <= 0) {
+				const issue = { cube: cube.name, issue: 'degenerate_size', size: s };
+				const to = cube.to.slice();
+				for (let i = 0; i < 3; i++) if (s[i] <= 0) to[i] = r4(cube.from[i] + FIX_MIN_SIZE);
+				issue.fix = {
+					element: cube.name, issue: 'degenerate_size', tool: 'edit_element',
+					fix: { element: cube.name, from: cube.from.slice(), to },
+				};
+				issues.push(issue);
+			}
+			if (animMode && (!cube.parent || cube.parent === 'root')) {
+				const issue = { cube: cube.name, issue: 'no_bone_parent' };
+				if (singleBone)
+					issue.fix = {
+						element: cube.name, issue: 'no_bone_parent', tool: 'edit_element',
+						fix: { element: cube.name, parent: singleBone },
+					};
+				issues.push(issue);
+			}
 		});
 
 		// Z-FIGHTING / clipping detection: two faces sharing the same plane and
@@ -2047,11 +2110,24 @@ const commands = {
 		// offsetting one cube by >=0.1 (or insetting it) so the faces aren't coplanar.
 		// Shared scan with measure clearance (same COPLANAR_EPS/OVERLAP_MIN).
 		clearanceOverlaps().forEach((e) => {
-			issues.push({
+			const issue = {
 				issue: 'coplanar_overlap', cubes: [e.a.name, e.b.name],
 				axis: e.axis, plane: e.plane,
 				hint: 'faces coplanar -> z-fight; offset one cube by >=0.1 on this axis',
-			});
+			};
+			// Proposed fix: nudge the second cube by OVERLAP_MIN along the
+			// reported axis (meets the documented >=0.1 offset).
+			const ax = AXES.indexOf(e.axis);
+			if (ax >= 0) {
+				const from = e.b.from.slice(), to = e.b.to.slice();
+				from[ax] = r4(from[ax]) + OVERLAP_MIN;
+				to[ax] = r4(to[ax]) + OVERLAP_MIN;
+				issue.fix = {
+					element: e.b.name, issue: 'coplanar_overlap', tool: 'edit_elements',
+					fix: { edits: [{ element: e.b.name, patch: { from, to } }] },
+				};
+			}
+			issues.push(issue);
 		});
 
 		const byType = {};
