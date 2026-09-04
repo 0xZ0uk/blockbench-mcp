@@ -162,13 +162,13 @@ upload the zip or point the client at the folder. See `skills/INSTALL.md`.
 | **Status & guidance** | `get_status`, `get_guide`, `list_formats` |
 | **Project** | `new_project`, `set_project_meta`, `save_project`, `export_project`, `load_project`, `close_project` |
 | **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `edit_element`, `edit_elements`, `delete_element`, `delete_elements`, `list_outliner`, `query_elements`, `get_element`, `measure`, `check_model` |
-| **UV & textures** | `create_texture`, `paint_texture`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `list_textures`, `get_texture` |
+| **UV & textures** | `create_texture`, `paint_texture`, `smooth_bake`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `list_textures`, `get_texture` |
 | **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `list_animations`, `remove_animation` |
 | **View** | `set_camera_angle`, `screenshot`, `screenshot_views`, `set_reference_image`, `compare_views` |
 | **Plugins** | `list_plugins`, `install_plugin`, `uninstall_plugin` |
 | **Escape hatch** | `execute_script` |
 
-Conventions: coordinates are **Blockbench units**; rotations are **degrees**; texture pixel ops use a **top-left origin with y pointing down**. `add_cube` returns each face's resolved UV rect; `detail_cubes` then base-coats every face and `paint_faces` lets you paint features (eyes, nose, claws) in coordinates relative to a face, so you don't compute absolute UVs by hand.
+Conventions: coordinates are **Blockbench units**; rotations are **degrees**; texture pixel ops use a **top-left origin with y pointing down**. `add_cube` returns each face's resolved UV rect; `smooth_bake` then base-coats every face and `paint_faces` lets you paint features (eyes, nose, claws) in coordinates relative to a face, so you don't compute absolute UVs by hand.
 
 ## Example: an animated GeckoLib bear
 

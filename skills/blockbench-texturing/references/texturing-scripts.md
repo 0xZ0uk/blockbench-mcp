@@ -4,73 +4,40 @@ Snippets are the **body** of an `execute_script` call (the `code` argument). The
 Blockbench with the full API. Adapt names/colours, then run. Every mutation is wrapped in
 `Undo.initEdit` / `Undo.finishEdit` — keep that pattern.
 
-## 1. Smooth texture bake (the core of "good textures")
+## 1. Smooth texture bake — use the `smooth_bake` tool instead
 
-Assigns the texture to every face (no gaps), then bakes a smooth, shaded base per face and blurs
-each island. Edit `baseFor(name)` to map cube-name → colour. Cubes named `*_core` are treated as
-emissive/glow. Paint crisp features AFTER this (snippet 2). Run `pack_uv` BEFORE this so islands
-don't overlap.
+The server ships a first-class `smooth_bake` tool: it assigns the texture to every
+chosen face (no gaps), then bakes the smooth shaded base per face (soft vertical
+gradient + directional shading + subtle mottle) and blurs each island — the exact
+recipe the old script below used to hand-roll. **Call it after `pack_uv`, before
+painting features.** Cubes named `*_core` bake bright (emissive read); hard parts
+(`*_cap`, `*_base`, chains/cords) keep crisp edges.
 
-```js
-const tex = Texture.all[0];
-Undo.initEdit({elements:Cube.all});
-Cube.all.forEach(c=>{ for(const d in c.faces){ if(c.faces[d]) c.faces[d].texture = tex.uuid; } });
-Undo.finishEdit('assign tex');
-
-const hexToRgb=h=>{h=h.replace('#','');return{r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};};
-const cl=v=>v<0?0:v>255?255:v|0;
-const shade=(hex,f)=>{const c=hexToRgb(hex);return 'rgb('+cl(c.r*f)+','+cl(c.g*f)+','+cl(c.b*f)+')';};
-const rectOf=f=>{const u=f.uv;return{x:Math.round(Math.min(u[0],u[2])),y:Math.round(Math.min(u[1],u[3])),w:Math.round(Math.abs(u[2]-u[0])),h:Math.round(Math.abs(u[3]-u[1]))};};
-
-// ---- EDIT THIS: cube-name -> base colour (your palette) ----
-const GREENS=['#5f7a2e','#6d8a38','#7c9442','#56702a','#849a48'];
-const isGlow = n => /_core$/.test(n);
-function baseFor(n){
-  if(isGlow(n))                 return '#3fe0d6';   // teal glow accent
-  if(/_cap$|_base$|chain|cord/.test(n)) return '#2a2620'; // dark frame/links
-  if(/antler|branch/.test(n))   return '#6b4a2e';   // wood brown
-  if(/leaf|moss/.test(n))       return GREENS[(Math.random()*GREENS.length)|0];
-  if(/head|torso|body|limb|leg|arm/.test(n)) return '#c8bca0'; // pale body
-  return '#6e4f30';                                  // default brown
+```jsonc
+smooth_bake {
+  "base": "#6e4f30",
+  "colors": [
+    { "match": "_core$", "color": "#3fe0d6" },
+    { "match": "_cap$|_base$|chain|cord", "color": "#2a2620" },
+    { "match": "antler|branch", "color": "#6b4a2e" },
+    { "match": "leaf|moss", "color": "#7c9442" },
+    { "match": "head|torso|body|limb|leg|arm", "color": "#c8bca0" }
+  ],
+  "noise": 0.13, "blur": 0.55
 }
-// up brighter, down darker, slight side variation -> soft 3D form
-const faceMul={up:1.12,down:0.78,north:0.95,south:1.0,east:1.06,west:0.88};
-
-tex.edit((canvas)=>{
-  const ctx=canvas.getContext('2d'); ctx.imageSmoothingEnabled=false;
-  ctx.fillStyle='#3a3530'; ctx.fillRect(0,0,canvas.width,canvas.height); // backdrop
-  const jobs=[];
-  Cube.all.forEach(cube=>{ const base=baseFor(cube.name), glow=isGlow(cube.name);
-    for(const dir in cube.faces){ const f=cube.faces[dir]; if(!f) continue;
-      const r=rectOf(f); if(r.w<=0||r.h<=0) continue;
-      const mul = glow?1:(faceMul[dir]??1);
-      const g=ctx.createLinearGradient(0,r.y,0,r.y+r.h);
-      if(glow){ g.addColorStop(0,shade(base,1.12)); g.addColorStop(.5,shade(base,1.42)); g.addColorStop(1,shade(base,1.05)); }
-      else    { g.addColorStop(0,shade(base,mul*1.1)); g.addColorStop(1,shade(base,mul*0.85)); }
-      ctx.fillStyle=g; ctx.fillRect(r.x,r.y,r.w,r.h);
-      jobs.push({cube,dir,r,base,mul,glow});
-    }});
-  // subtle low-contrast mottle (skip glow + hard parts)
-  jobs.forEach(({cube,r,base,mul,glow})=>{ if(glow||/_cap$|_base$|chain|cord/.test(cube.name)) return;
-    const n=Math.max(1,Math.floor(r.w*r.h*0.10));
-    for(let i=0;i<n;i++){ const px=r.x+(Math.random()*r.w|0), py=r.y+(Math.random()*r.h|0);
-      ctx.fillStyle=shade(base,mul*(0.86+Math.random()*0.26)); ctx.fillRect(px,py,1,Math.random()<.5?2:1); } });
-  // 3x3 box blur per island (the "smooth brush"); skip glow + hard parts for crisp edges
-  const blur=(rx,ry,rw,rh,amt)=>{ if(rw<2||rh<2) return;
-    const s=ctx.getImageData(rx,ry,rw,rh).data, out=ctx.createImageData(rw,rh), d=out.data;
-    for(let y=0;y<rh;y++)for(let x=0;x<rw;x++){ let R=0,G=0,B=0,N=0;
-      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const xx=x+dx,yy=y+dy; if(xx<0||yy<0||xx>=rw||yy>=rh)continue;
-        const i=(yy*rw+xx)*4; R+=s[i];G+=s[i+1];B+=s[i+2];N++; }
-      const o=(y*rw+x)*4; d[o]=cl(s[o]*(1-amt)+R/N*amt); d[o+1]=cl(s[o+1]*(1-amt)+G/N*amt); d[o+2]=cl(s[o+2]*(1-amt)+B/N*amt); d[o+3]=255; }
-    ctx.putImageData(out,rx,ry); };
-  jobs.forEach(({cube,r,glow})=>{ if(!glow && !/_cap$|_base$|chain|cord/.test(cube.name)) blur(r.x,r.y,r.w,r.h,0.55); });
-}, {edit_name:'smooth bake', no_undo:false});
-Canvas.updateAll();
-return {baked:true, cubes:Cube.all.length};
 ```
 
-Tuning: pale/smooth surfaces -> lower mottle (`*0.06`, amplitude `0.10`); fur/foliage -> higher.
-For grizzled backs add a few darker vertical streaks on `up` faces before the blur.
+Map your palette in `colors` (cube-name regex → colour, first hit wins; `base` is the
+fallback) instead of editing a `baseFor` function. Tune with `noise` (mottle),
+`blur` (smooth brush, 0 disables), `top_light` / `bottom_dark` (directional
+shading), `glow_regex`, and `scope` + `elements[]` to bake a subset. (The retired
+`execute_script` body this replaces is intentionally not kept here — one seam:
+the tool is the recipe now.)
+
+Tuning: pale/smooth surfaces -> lower mottle (`noise` ~0.06); fur/foliage -> higher.
+For grizzled backs, bake first, then add a few darker vertical streaks on `up` faces
+with `paint_faces` — or use `detail_cubes` with `streaks:true`, which shares this
+recipe and adds grain/edge-darkening knobs.
 
 ## 2. Paint crisp features (eyes / nose / claws) — run AFTER the bake
 

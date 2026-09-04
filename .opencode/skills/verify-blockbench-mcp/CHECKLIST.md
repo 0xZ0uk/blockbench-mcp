@@ -6,16 +6,17 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-   or a one-off stdio script. Proved when: response lists 52 tools including
+   or a one-off stdio script. Proved when: response lists 53 tools including
    `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
    `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`,
-   `compare_views`.
+   `compare_views`, `smooth_bake`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
    `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
    passing (tallies grow as cases are added; at ticket #23:
    105 tests / 0 fail, 108 contract cases; at ticket #26:
-   115 tests / 0 fail, 118 contract cases).
+   115 tests / 0 fail, 118 contract cases; at ticket #27:
+   122 tests / 0 fail, 124 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -113,6 +114,18 @@ never leave it to lie.
    `(projection restored)` and each `View:` line names its blueprint flags.
    Untested without an owned instance —
    record `untested + reason`, never silent.
+- [ ] **Smooth bake (`smooth_bake`, ticket #27)** — Reach: MCP
+  `tools/call smooth_bake` (needs an open project with a texture; the bridge
+  handler is also pinned headless). Drive: call `{}` (all cubes, snippet
+  defaults), `{base, colors, noise, blur}` (palette bake),
+  `{scope:"selected", elements:["<cube>"]}` (subset). Proved when: the result
+  parses to `{baked:true, cubes, faces, texture}` with every chosen face
+  assigned, per-face gradient + mottle + per-island blur on the canvas, glow
+  (`*_core`) and hard parts (`*_cap`/`*_base`/chains/cords) crisp (no
+  mottle/blur), and errors naming the remedy (no texture, no matching cubes)
+  — pinned headless by `tests/contract/smooth-bake.test.mjs`, which drives
+  the real bridge handler with stubbed Blockbench globals. Live-Blockbench
+  drive on an owned instance is optional.
 - [ ] **Pinned reference (`set_reference_image`, ticket #25)** — Reach: MCP
   `tools/call set_reference_image` (needs an open project; file paths need
   the desktop app, inline images work anywhere). Drive: pin `{view:"front",

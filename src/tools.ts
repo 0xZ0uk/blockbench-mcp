@@ -638,6 +638,30 @@ export const tools: ToolDef[] = [
     })
   ),
   forward(
+    "smooth_bake",
+    "SMOOTH bake — the promoted skill-snippet base coat (ticket #27). Assigns the texture to every chosen face (no untextured 'gaps'), then per face bakes a soft vertical gradient in the region colour + gentle directional shading (top lighter, underside darker) + a subtle low-contrast mottle, and finally a 3x3 box blur per UV island (the 'smooth brush'). This is the native form of the texturing skill's smooth-bake recipe: the same three steps, driven by parameters instead of hand-edited execute_script JS. Run pack_uv FIRST, then this right after create_texture, then paint_faces for crisp features. Cubes matching `glow_regex` (default '*_core') are filled bright (emissive read) with no mottle/blur; hard-surface parts (`*_cap`, `*_base`, chains/cords) keep crisp edges (no mottle/blur). Scope default: omitted `scope` keeps today's behavior — ALL cubes (the legacy `cubes` selector still narrows it during deprecation). Prefer this over detail_cubes when you want the snippet's palette-first recipe; detail_cubes adds streaks/edge-darkening knobs this tool omits.",
+    obj({
+      ...scopeFields(),
+      cubes: {
+        oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+        description:
+          "DEPRECATED legacy selector (prefer `scope` + `elements[]`): the 'all' string, a single cube name/uuid, or an array of names/uuids. Still accepted during the deprecation window; ignored when `scope`/`elements[]` are given.",
+      },
+      texture: { type: "string", description: "Texture to paint on (defaults to the project's default texture)." },
+      base: { type: "string", description: "Default base color, e.g. '#6e4f30'. Used where no `colors` rule matches." },
+      colors: {
+        type: "array",
+        description: "Region colour map by cube name: [{match:'leg|paw', color:'#5a3d22'}, ...]. `match` is a regex tested case-insensitively against the cube name; first hit wins. The key to matching a reference palette and not making everything one colour.",
+        items: { type: "object" },
+      },
+      noise: { type: "number", description: "Mottle amount 0..1 (default 0.13 — the skill-snippet amplitude)." },
+      blur: { type: "number", description: "Per-island smooth-brush blur 0..1 (default 0.55). 0 disables." },
+      top_light: { type: "number", description: "How much brighter up-faces are (default 0.12)." },
+      bottom_dark: { type: "number", description: "How much darker down-faces are (default 0.22)." },
+      glow_regex: { type: "string", description: "Regex for emissive cube names (default '_core$')." },
+    })
+  ),
+  forward(
     "paint_faces",
     "Paint features onto specific cube faces using coordinates RELATIVE to each face (so [0,0] is that face's top-left corner) — no manual UV math, which is what usually causes misplaced/garbled texture. Use it for eyes, nostrils, mouths, claws, fur tufts, stripes, scars, bandages, armour trim, etc. Either pass one {cube, face, base?, ops?} or a `faces` array of them. Scope default: omitted `scope` keeps the single/batch form behavior; `scope` + `elements[]` paints the same face selection onto many cubes at once; omitted `face` paints ALL faces of the target cube(s). `faces` and `scope`/`elements[]` are mutually exclusive — the bridge rejects the mix naming `faces`.",
     obj({
