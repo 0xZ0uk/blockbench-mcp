@@ -20,6 +20,19 @@ Edit the files in `skills/<name>/`, then:
 
 - re-copy to your agent's skill directory (Code & friends), and/or
 
+## Custom commands (OpenCode)
+
+`commands/` ships `/plan-model`, `/silhouette-review`, `/bake-texture`,
+`/export-model`, and `/pose-preview` (provisional) — thin drivers over these skills
+that enforce the methodology gates. Install by copying the files into
+`.opencode/commands/` (project) or `~/.config/opencode/commands/` (global):
+
+```bash
+cp commands/*.md .opencode/commands/
+```
+
+The commands reference the skills, they do not restate them.
+
 ## What's inside
 
 - `blockbench-mcp/SKILL.md` — connection check, golden workflow, hard rules, tool cheat-sheet,
