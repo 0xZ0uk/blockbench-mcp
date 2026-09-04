@@ -1,6 +1,6 @@
 ---
 name: blockbench-mcp
-description: Core operating guide for driving Blockbench through the BlockbenchMCP server (the mcp__blockbench__* tools). Load whenever Blockbench MCP is mentioned or you are about to build, texture, or animate any 3D model in Blockbench. Covers the connection check, the golden build-review loop, tool-category map, and cross-cutting rules (review critically, iterate 2-3x, save hygiene). Pair with the domain skills (blockbench-modeling, blockbench-texturing, blockbench-animation) for craft rules.
+description: Core operating guide for driving Blockbench through the BlockbenchMCP server (the mcp__blockbench__* tools under Claude Code, blockbench_* under OpenCode). Load whenever Blockbench MCP is mentioned or you are about to build, texture, or animate any 3D model in Blockbench. Covers the connection check, the golden build-review loop, tool-category map, and cross-cutting rules (review critically, iterate 2-3x, save hygiene). Pair with the domain skills (blockbench-modeling, blockbench-texturing, blockbench-animation) for craft rules.
 ---
 
 # Blockbench MCP — core operator guide
@@ -8,6 +8,14 @@ description: Core operating guide for driving Blockbench through the BlockbenchM
 This skill makes you good at driving Blockbench through the **BlockbenchMCP** bridge
 (`mcp__blockbench__*` tools). It captures the workflow and cross-cutting rules so models come out
 detailed, smoothly textured, and close to the reference — not a pile of flat boxes.
+
+## Tool names: Claude Code vs OpenCode
+
+The same tool resolves under two names depending on the client (see AGENTS.md at
+the repo root): Claude Code calls it `mcp__blockbench__get_status`, OpenCode calls
+it `blockbench_get_status`. This skill writes bare names (`get_status`, `add_cubes`,
+`check_model`, ...) — resolve each with your client's prefix before calling. Every
+bare name below is verbatim-usable once prefixed.
 
 For craft specifics, also load the domain skill you need:
 - **blockbench-modeling** — proportions, hierarchy, meshes, silhouette review (before building)
