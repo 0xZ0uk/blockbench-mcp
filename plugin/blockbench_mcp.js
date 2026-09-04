@@ -1565,8 +1565,8 @@ const ANIMATION_GUIDE = [
 	'',
 	'ROTATION SIGN (verified): a bone +X rotation tilts its FRONT (-Z side) UP. To point',
 	'a head/snout DOWN you need a NEGATIVE delta. Always preview the pose and confirm:',
-	'  execute_script: anim.select(); Timeline.setTime(t); Animator.preview(); then',
-	'  screenshot_views. Reset before saving: Modes.options.edit.select(); Timeline.setTime(0).',
+	'  preview_pose {animation, time} then screenshot_views. Reset before saving:',
+	'  Modes.options.edit.select(); Timeline.setTime(0).',
 	'',
 	'PRINCIPLES: overlap & follow-through (limbs lag the body), anticipation before a',
 	'strike, ease in/out (catmullrom), and a held contact frame on impacts. Keep loops',
@@ -3124,6 +3124,27 @@ const commands = {
 		if (!anim) throw new Error('Animation not found: ' + p.animation);
 		anim.remove(true);
 		return { removed: true };
+	},
+
+	// Promoted skill-snippet pose preview (ticket #29): select an animation,
+	// set the timeline to a given time, and drive the pose preview so the
+	// agent can screenshot the pose — the exact snippet behavior, as a native
+	// tool. Single seam: the animation skill references this tool instead of
+	// the snippet. Returns the applied animation/time in contract-suite style.
+	preview_pose(p) {
+		requireProject();
+		const ref = p.animation;
+		if (ref == null || ref === '') throw new Error('Field "animation" (uuid or name) is required.');
+		const anim = findAnimation(ref);
+		if (!anim) throw new Error('Field "animation" not found: ' + ref);
+		if (p.time == null || typeof p.time !== 'number' || Number.isNaN(p.time)) {
+			throw new Error('Field "time" (seconds) is required.');
+		}
+		const t = Number(p.time);
+		anim.select();
+		Timeline.setTime(t);
+		Animator.preview();
+		return { animation: anim.name, uuid: anim.uuid, time: t };
 	},
 
 	// ---- view / camera / screenshot --------------------------------------

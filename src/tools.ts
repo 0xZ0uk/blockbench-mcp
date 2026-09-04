@@ -758,6 +758,17 @@ export const tools: ToolDef[] = [
     "Delete an animation from the project.",
     obj({ animation: { type: "string" } }, ["animation"])
   ),
+  forward(
+    "preview_pose",
+    "Preview an animation pose at a given time so you can screenshot it — the promoted animation-skill snippet as a native tool (ticket #29). Selects the animation (uuid or name), sets the timeline to `time` seconds, and drives the pose preview (the exact `anim.select(); Timeline.setTime(t); Animator.preview();` recipe, now parameterised). Call this after create_animation/add_keyframes, then screenshot_views to confirm the pose reads correctly — especially head/neck signs — before exporting. Reset to rest before saving. Returns the applied {animation, uuid, time}. Errors name the field (`animation` when unknown).",
+    closedObj(
+      {
+        animation: { type: "string", description: "uuid or name of the animation to preview." },
+        time: { type: "number", description: "Timeline time in seconds to preview (e.g. 0.25)." },
+      },
+      ["animation", "time"]
+    )
+  ),
 
   // ===== view / camera / screenshot ========================================
   forward(

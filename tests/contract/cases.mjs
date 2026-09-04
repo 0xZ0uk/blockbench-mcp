@@ -932,4 +932,57 @@ export const contractCases = [
     expect: "error",
     errorField: "bogus",
   },
+
+  // ---- ticket #29: preview_pose native tool (promoted skill snippet) ----
+  // Animation identifier + time; handler parity (select + setTime + preview
+  // on a fixture animation) is pinned in preview-pose.test.mjs (real bridge
+  // handler, stubbed globals).
+  { id: "preview-pose-ok", ticket: "#29", tool: "preview_pose", args: { animation: "walk", time: 0.25 }, expect: "ok" },
+  {
+    id: "preview-pose-zero",
+    ticket: "#29",
+    tool: "preview_pose",
+    args: { animation: "animation.bear.walk", time: 0 },
+    expect: "ok",
+  },
+  {
+    id: "preview-pose-missing-animation",
+    ticket: "#29",
+    tool: "preview_pose",
+    args: { time: 0.25 },
+    expect: "error",
+    errorField: "animation",
+  },
+  {
+    id: "preview-pose-missing-time",
+    ticket: "#29",
+    tool: "preview_pose",
+    args: { animation: "walk" },
+    expect: "error",
+    errorField: "time",
+  },
+  {
+    id: "preview-pose-animation-type",
+    ticket: "#29",
+    tool: "preview_pose",
+    args: { animation: 123, time: 0.25 },
+    expect: "error",
+    errorField: "animation",
+  },
+  {
+    id: "preview-pose-time-type",
+    ticket: "#29",
+    tool: "preview_pose",
+    args: { animation: "walk", time: "0.25" },
+    expect: "error",
+    errorField: "time",
+  },
+  {
+    id: "preview-pose-unknown-prop",
+    ticket: "#29",
+    tool: "preview_pose",
+    args: { animation: "walk", time: 0.25, bogus: 1 },
+    expect: "error",
+    errorField: "bogus",
+  },
 ];

@@ -70,14 +70,18 @@ Bones: `body`, `head`, `arm_left/right`, `leg_left/right`, decorative bones.
 
 ## Previewing poses
 
-```js
-const a=Animation.all.find(x=>x.name===params.name);
-a.select(); Timeline.setTime(params.t); Animator.preview();
-return {animation:a.name, t:params.t};
+Call the `preview_pose` tool, then `screenshot_views`.
+
+```jsonc
+preview_pose {
+  "animation": "<animation name>",
+  "time": 0.25
+}
 ```
 
-Pass `params:{name:'<animation name>', t:0.25}`, then `screenshot_views`. Confirm the pose reads
-correctly — especially head/neck signs — before exporting.
+Confirm the pose reads correctly — especially head/neck signs — before exporting.
+(The retired `execute_script` body this replaces is intentionally not kept here.
+One seam: the tool is the recipe now.)
 
 ## Save/export reminders
 

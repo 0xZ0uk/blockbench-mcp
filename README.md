@@ -163,7 +163,7 @@ upload the zip or point the client at the folder. See `skills/INSTALL.md`.
 | **Project** | `new_project`, `set_project_meta`, `save_project`, `export_project`, `load_project`, `close_project` |
 | **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `edit_element`, `edit_elements`, `delete_element`, `delete_elements`, `list_outliner`, `query_elements`, `get_element`, `measure`, `check_model` |
 | **UV & textures** | `create_texture`, `paint_texture`, `smooth_bake`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `export_textures`, `list_textures`, `get_texture` |
-| **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `list_animations`, `remove_animation` |
+| **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `preview_pose`, `list_animations`, `remove_animation` |
 | **View** | `set_camera_angle`, `screenshot`, `screenshot_views`, `set_reference_image`, `compare_views` |
 | **Plugins** | `list_plugins`, `install_plugin`, `uninstall_plugin` |
 | **Escape hatch** | `execute_script` |

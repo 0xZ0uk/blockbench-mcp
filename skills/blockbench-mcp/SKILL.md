@@ -74,7 +74,7 @@ Iterate at least 2-3 passes. The first pass is never good enough.
   `list_textures`, `get_texture`,
   `create_vfx_texture`, `set_texture_render_mode`.
 - Review: `screenshot`, `screenshot_views` (multi-angle), `check_model`.
-- Animate: `create_animation`, `add_keyframe(s)`, `list_animations`, `remove_animation`.
+- Animate: `create_animation`, `add_keyframe(s)`, `preview_pose` (pose preview at a time, then screenshot), `list_animations`, `remove_animation`.
 - Plugins: `list_plugins`, `install_plugin`, `uninstall_plugin`.
 - Escape hatch: `execute_script` — full Blockbench API (undo-wrapped snippets live in the
   domain skills' references). Use it when a dedicated tool cannot express the edit.
