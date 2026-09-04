@@ -147,9 +147,11 @@ test("set_reference_image: errors name the offending field", () => {
     /Field "source" file not found: \/ref\/missing\.png/
   );
   // Garbage string: neither an existing path nor image data.
+  // Deterministic branch: "!!!" fails the base64 charset test, the fake fs
+  // raises ENOENT, so this is always the file-not-found message.
   assert.throws(
     () => commands.set_reference_image({ view: "left", source: "!!!" }),
-    /Field "source" (file not found|must be an existing image file path)/
+    /Field "source" file not found: !!!/
   );
   // Valid base64 but not image bytes.
   assert.throws(
@@ -173,6 +175,15 @@ test("set_reference_image: errors name the offending field", () => {
   assert.throws(() => commands.set_reference_image({ view: "", source: "" }), /Field "view"/);
   assert.throws(
     () => commands.set_reference_image({ view: { position: [0, "x", 0] }, source: "" }),
+    /Field "view"/
+  );
+  // One-sided explicit views pin under no key: both halves are required.
+  assert.throws(
+    () => commands.set_reference_image({ view: { position: [0, 8, 32] }, source: "" }),
+    /Field "view"/
+  );
+  assert.throws(
+    () => commands.set_reference_image({ view: { target: [0, 8, 0] }, source: "" }),
     /Field "view"/
   );
   // Bad sources.

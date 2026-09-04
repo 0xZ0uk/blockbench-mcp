@@ -622,7 +622,10 @@ function referenceStore() {
 /** Canonical store key for one `view` (preset id string or {position,target}). */
 function referenceViewKey(view) {
 	const bp = normalizeBlueprintView(view, {});
-	if (bp.position || bp.target) {
+	// Both halves are required: a one-sided object would pin under a
+	// malformed key (pos(..)->tgt()), and the schema advertises the pair —
+	// the bridge is the enforcement point (args are forwarded raw).
+	if (bp.position && bp.target) {
 		const fmt = (a) => (Array.isArray(a) ? a.map((n) => {
 			if (typeof n !== 'number' || !isFinite(n)) throw new Error('Field "view" position/target must be finite numbers [x,y,z].');
 			return String(n);
@@ -666,10 +669,10 @@ function decodeBase64Capped(b64) {
 	if (clean.length > REFERENCE_MAX_B64) {
 		throw new Error(`Field "source" image is too large (inline image, max ${REFERENCE_MAX_BYTES} bytes).`);
 	}
-	try {
-		const buf = Buffer.from(clean, 'base64');
-		return buf.length ? buf : null;
-	} catch (e) { return null; }
+	// Buffer.from(str, 'base64') never throws (it skips invalid chars), so an
+	// empty result is the only failure signal.
+	const buf = Buffer.from(clean, 'base64');
+	return buf.length ? buf : null;
 }
 
 /**
