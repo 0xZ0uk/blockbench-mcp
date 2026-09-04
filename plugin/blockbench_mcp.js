@@ -416,6 +416,34 @@ const FIX_MIN_SIZE = 1;
 const r4 = (n) => Math.round(n * 10000) / 10000;
 
 /**
+ * Machine-readable done-gate for check_model (ticket #22).
+ * Classification (explicit, documented here and in src/tools.ts):
+ * - error (fails the gate): degenerate_size, zero_uv, uv_out_of_bounds,
+ *   coplanar_overlap — geometry/UV defects that break the render.
+ * - warning (gate still passes): no_texture, no_bone_parent — missing
+ *   assignments recoverable without geometry changes.
+ * Unknown future kinds default to error (fail-closed) so the gate never
+ * silently passes an unclassified problem.
+ * Returns {errors, warnings, gate_pass} with gate_pass true iff errors == 0.
+ */
+const GATE_SEVERITY = {
+	degenerate_size: 'error',
+	zero_uv: 'error',
+	uv_out_of_bounds: 'error',
+	coplanar_overlap: 'error',
+	no_texture: 'warning',
+	no_bone_parent: 'warning',
+};
+function summarizeGate(issues) {
+	let errors = 0, warnings = 0;
+	for (const i of issues || []) {
+		if ((GATE_SEVERITY[i && i.issue] || 'error') === 'error') errors++;
+		else warnings++;
+	}
+	return { errors, warnings, gate_pass: errors === 0 };
+}
+
+/**
  * Coplanar-overlap scan over unrotated cubes (the z-fight audit).
  * Returns [{a, b, axis, plane, gap, overlap:{<o1>:n, <o2>:n}}] capped at 80
  * pairs, one entry per pair on the first coplanar axis found.
@@ -2217,6 +2245,12 @@ const commands = {
 	// - degenerate_size: restore a 1-unit extent on the flagged axis via
 	//   edit_element (full from/to so the patch is self-contained).
 	// - no_bone_parent: attach to the project's single bone via edit_element.
+	//
+	// The top level also carries `gate: {errors, warnings, gate_pass}` from
+	// summarizeGate (ticket #22): errors = degenerate_size + zero_uv +
+	// uv_out_of_bounds + coplanar_overlap, warnings = no_texture +
+	// no_bone_parent, gate_pass true iff errors == 0. `issues`/`by_type`/
+	// `issue_count` are unchanged; `gate` is purely additive.
 	check_model() {
 		requireProject();
 		const tw = Project.texture_width, th = Project.texture_height;
@@ -2312,6 +2346,7 @@ const commands = {
 			cubes: Cube.all.length, groups: Group.all.length, textures: Texture.all.length,
 			texture_size: [tw, th], animation_format: animMode,
 			issue_count: issues.length, by_type: byType, issues,
+			gate: summarizeGate(issues),
 		};
 	},
 
