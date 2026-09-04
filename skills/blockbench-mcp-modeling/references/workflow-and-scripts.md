@@ -190,5 +190,5 @@ const content=typeof built==='string'?built:JSON.stringify(built,null,2);
 Blockbench.writeFile(params.anim, { content, savetype:'text' });
 return { png:params.png, anim:params.anim };
 ```
-Pass `params:{png:'D:/.../model.png', anim:'D:/.../model.animation.json'}`. Geometry itself is
+Pass `params:{png:'<your-export-dir>/model.png', anim:'<your-export-dir>/model.animation.json'}` with an absolute path that exists on the machine running Blockbench. Geometry itself is
 exported with the `export_project` tool.

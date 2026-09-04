@@ -12,7 +12,16 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 29 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 32 pass / 0 fail).
+- [ ] **Version consistency + shipped-config portability** — Reach: MCP
+  stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
+  Drive: spawn `node dist/index.js`, send `initialize`, read
+  `serverInfo.version`; run the drift guard via `pnpm test`. Proved when:
+  `serverInfo.version` equals `package.json` `version` and the plugin's
+  declared `version:` literal (v0.2.0 at time of writing), and the
+  `.mcp.json` test confirms `args` are the repo-relative `dist/index.js`
+  with the `BLOCKBENCH_MCP_PORT` override. Stdout/stderr evidence: ready
+  line names the same version.
 - [ ] **Bridge status (read-only, shared-safe)** — Reach:
   `curl -s http://127.0.0.1:8787/ping` plus `get_status` over the bridge.
   Drive: curl, or MCP `tools/call get_status` with an owned stdio server.

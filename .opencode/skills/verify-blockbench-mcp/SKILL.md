@@ -20,7 +20,7 @@ pnpm run build   # or: npm run build  (runs tsc -> dist/)
 node dist/index.js   # stdio transport; logs go to stderr, never stdout
 ```
 
-Ready signal on stderr: `BlockbenchMCP server ready. Bridging to Blockbench at http://127.0.0.1:8787`.
+Ready signal on stderr: `BlockbenchMCP server ready (v<version>). Bridging to Blockbench at http://127.0.0.1:8787` (the reported version comes from `package.json` — see the version-consistency checklist entry).
 Stdio servers are per-process: each `node dist/index.js` you spawn is yours.
 Track its PID and kill exactly that PID on teardown — never `pkill`
 blockbench, never kill by port.

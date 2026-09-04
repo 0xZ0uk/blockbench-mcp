@@ -16,6 +16,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { tools } from "./tools.js";
 import { BASE_URL } from "./client.js";
+import { SERVER_VERSION } from "./version.js";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -25,7 +26,7 @@ import { pathToFileURL } from "node:url";
  */
 export function createServer(): Server {
   const server = new Server(
-    { name: "blockbench-mcp", version: "0.1.0" },
+    { name: "blockbench-mcp", version: SERVER_VERSION },
     { capabilities: { tools: {} } }
   );
 
@@ -66,7 +67,9 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Logs go to stderr so they never corrupt the stdio protocol on stdout.
-  console.error(`BlockbenchMCP server ready. Bridging to Blockbench at ${BASE_URL}`);
+  console.error(
+    `BlockbenchMCP server ready (v${SERVER_VERSION}). Bridging to Blockbench at ${BASE_URL}`
+  );
 }
 
 const invokedAsCli =

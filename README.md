@@ -95,7 +95,9 @@ npm run build
 
 ## Connecting your AI client
 
-Point your client at `dist/index.js` over stdio. Use an **absolute path**.
+Point your client at `dist/index.js` over stdio. Run the build first (see
+[Installation](#installation)); from a fresh clone, the path below works on
+any machine because it is relative to this repo.
 
 **Claude Code** — `.mcp.json` in your project (or `claude mcp add`):
 
@@ -104,21 +106,28 @@ Point your client at `dist/index.js` over stdio. Use an **absolute path**.
   "mcpServers": {
     "blockbench": {
       "command": "node",
-      "args": ["/absolute/path/to/blockbench-mcp/dist/index.js"],
+      "args": ["dist/index.js"],
       "env": { "BLOCKBENCH_MCP_PORT": "8787" }
     }
   }
 }
 ```
 
-**Claude Desktop** — `claude_desktop_config.json`:
+> The `args` path is relative to the directory containing `.mcp.json` — clone
+> anywhere and it resolves. Use the same override shown above (or omit it to
+> take the default) to match the plugin's port setting.
+
+**Claude Desktop** — `claude_desktop_config.json` (this file lives outside the
+repo, so give it the repo's absolute path — get it with `pwd` from the repo
+root; on Windows `cd` prints it too):
 
 ```json
 {
   "mcpServers": {
     "blockbench": {
       "command": "node",
-      "args": ["C:\\path\\to\\blockbench-mcp\\dist\\index.js"]
+      "args": ["<output of pwd from the repo root>/dist/index.js"],
+      "env": { "BLOCKBENCH_MCP_PORT": "8787" }
     }
   }
 }
@@ -208,8 +217,8 @@ screenshot_views { "views": [{ "view": "front", "ortho": true, "px_per_unit": 8 
                              { "view": "top", "ortho": true, "px_per_unit": 8, "wireframe": true }] }
 
 // 8. Save / export
-save_project   { "path": "D:/models/bear.bbmodel" }
-export_project { "path": "D:/models/bear.geo.json" }
+save_project   { "path": "bear.bbmodel" }
+export_project { "path": "exports/bear.geo.json" }
 ```
 
 ## Troubleshooting

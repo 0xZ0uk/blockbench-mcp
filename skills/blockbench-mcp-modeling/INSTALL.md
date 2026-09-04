@@ -21,7 +21,7 @@ Copied to `~/.claude/skills/blockbench-mcp-modeling/`, so it's available in Clau
 automatically. Per-project alternative: put it under `<project>/.claude/skills/`.
 
 ## Updating
-Edit the files in `d:/projects/blockbench-mcp/skills/blockbench-mcp-modeling/`, then re-copy to
+Edit the files in `<repo>/skills/blockbench-mcp-modeling/` (wherever this repo is cloned), then re-copy to
 `~/.claude/skills/` (Code) and/or re-zip and re-upload (Desktop). Re-zip with PowerShell:
 `Compress-Archive -Path .\blockbench-mcp-modeling -DestinationPath .\blockbench-mcp-modeling.zip -Force`
 
