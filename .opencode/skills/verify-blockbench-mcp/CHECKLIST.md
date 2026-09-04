@@ -13,7 +13,7 @@ never leave it to lie.
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
     `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
     passing (tallies grow as cases are added; at ticket #22 post-rebase:
-    98 tests / 0 fail, 108 contract cases).
+    99 tests / 0 fail, 108 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
