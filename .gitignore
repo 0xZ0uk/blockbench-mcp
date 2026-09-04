@@ -6,3 +6,4 @@ dist/
 ref/
 models/
 .artifacts/
+.opencode
