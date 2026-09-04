@@ -33,7 +33,7 @@ get_status / get_guide
  -> add_cubes + add_mesh      (bulk: 20-100 cubes; segments; mirror L/R in the same call)
  -> pack_uv                   (REQUIRED before texturing box-UV cubes)
  -> create_texture            (mid-tone fill; 64-192 px depending on cube count)
- -> bake                      (execute_script smooth bake — see blockbench-texturing)
+ -> bake                      (`smooth_bake` — see blockbench-texturing)
  -> paint features            (eyes, claws, runes, glow cores — AFTER the bake)
  -> screenshot_views          (front / side / back / iso AND the reference's exact angle)
  -> check_model               (fix untextured faces, bad UVs, unparented cubes)
@@ -67,7 +67,8 @@ Iterate at least 2-3 passes. The first pass is never good enough.
 - Build: `add_groups`, `add_cubes`, `add_mesh` (crystals/cones/cylinders/wedges — mesh-capable
   formats only), `add_plane` (VFX/particles), `mirror_element`, `edit_element(s)`,
   `delete_element(s)`, `measure`, `check_model`.
-- Texture: `pack_uv`, `set_cube_uv`, `create_texture`, `detail_cubes` (quick base coat),
+- Texture: `pack_uv`, `set_cube_uv`, `create_texture`, `smooth_bake` (palette-first base coat),
+  `detail_cubes` (base coat + streaks/edge-darkening knobs),
   `paint_faces` (features, face-relative coords), `paint_texture`, `apply_texture`,
   `import_texture`, `resize_texture`, `list_textures`, `get_texture`,
   `create_vfx_texture`, `set_texture_render_mode`.

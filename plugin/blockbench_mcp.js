@@ -1482,6 +1482,9 @@ const TEXTURING_GUIDE = [
 	'   the base colour + gentle directional shading (top lighter, underside darker) +',
 	'   a SUBTLE low-contrast mottle, then a 3x3 box blur per UV island (the "smooth',
 	'   brush"). This is the difference between good and bad textures. Tips:',
+	'   - `smooth_bake` is the same recipe with snippet-faithful defaults (palette-first,',
+	'     hard parts stay crisp) — prefer it for the standard bake; detail_cubes adds',
+	'     streaks/edge-darkening knobs.',
 	'   - Use the `colors` map to colour regions by cube name, e.g.',
 	'     colors:[{match:"leg|paw",color:"#5a3d22"},{match:"belly",color:"#3a2a18"}].',
 	'     Bodies/limbs are often the SAME tone as the head with darker extremities —',
@@ -2806,6 +2809,97 @@ const commands = {
 
 		Canvas.updateAll();
 		return { textured: cubes.length, faces: jobs.length, smooth: true, texture: serializeTexture(tex) };
+	},
+
+	// Promoted skill-snippet SMOOTH bake (ticket #27): the texturing skill's
+	// smooth-bake recipe as a native tool — gradient + mottle + per-island
+	// blur per face. Shares the smooth-coat helpers with detail_cubes
+	// (shadeHex, faceRect, blurRect, regionColorFor, scope) and differs only
+	// in snippet-faithful policy: snippet palette default, `_core$` glow,
+	// hard parts (*_cap/*_base/chains/cords) keep crisp edges, snippet
+	// gradient depth. No streaks/edge-darkening knobs (see detail_cubes).
+	smooth_bake(p) {
+		requireProject();
+		let tex = p.texture ? findTexture(p.texture) : null;
+		if (!tex && Texture.getDefault) tex = Texture.getDefault();
+		if (!tex) tex = Texture.all[0];
+		if (!tex) throw new Error('No texture to paint on. Create one first with create_texture.');
+
+		let cubes;
+		const sel = resolveScope(p);
+		if (sel.mode === 'all') cubes = Cube.all.slice();
+		else if (sel.mode === 'selected') cubes = sel.refs.map(findElement).filter((c) => c instanceof Cube);
+		else if (!p.cubes || p.cubes === 'all') cubes = Cube.all.slice();
+		else cubes = toList(p.cubes).map(findElement).filter((c) => c instanceof Cube);
+		if (!cubes.length) throw new Error('No matching cubes.');
+
+		const base = p.base || '#6e4f30';
+		const colors = p.colors || null;                              // region colour map
+		const mottle = p.noise != null ? Number(p.noise) : 0.13;       // snippet amplitude
+		const blurAmt = p.blur != null ? Number(p.blur) : 0.55;        // the smooth brush
+		const topLight = p.top_light != null ? Number(p.top_light) : 0.12;
+		const bottomDark = p.bottom_dark != null ? Number(p.bottom_dark) : 0.22;
+		const glowRe = p.glow_regex ? new RegExp(p.glow_regex, 'i') : /_core$/i;
+		const hardRe = /_cap$|_base$|chain|cord/i;                     // hard parts stay crisp
+		const faceMul = {
+			up: 1 + topLight, down: 1 - bottomDark,
+			north: 0.95, south: 1.0, east: 1.06, west: 0.88,
+		};
+		const scale = tex.width / (Project.texture_width || tex.width);
+
+		const jobs = [];
+		Undo.initEdit({ elements: cubes });
+		cubes.forEach((cube) => {
+			const baseCol = regionColorFor(cube.name, colors, base);
+			const glow = glowRe.test(cube.name);
+			const hard = hardRe.test(cube.name);
+			for (const dir in cube.faces) {
+				const face = cube.faces[dir];
+				if (!face) continue;
+				face.texture = tex.uuid;
+				const r = faceRect(face, scale);
+				if (r.w <= 0 || r.h <= 0) continue;
+				jobs.push({ r, dir, base: baseCol, glow, hard, mul: faceMul[dir] != null ? faceMul[dir] : 1 });
+			}
+		});
+		Undo.finishEdit('MCP: assign texture');
+
+		tex.edit((canvas) => {
+			const ctx = canvas.getContext('2d');
+			ctx.imageSmoothingEnabled = false;
+			// 1) gradient base coat per face (snippet stops: mul*1.1 -> mul*0.85)
+			jobs.forEach(({ r, base, glow, mul }) => {
+				const g = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
+				if (glow) {
+					g.addColorStop(0, shadeHex(base, 1.12));
+					g.addColorStop(0.5, shadeHex(base, 1.42));
+					g.addColorStop(1, shadeHex(base, 1.05));
+				} else {
+					g.addColorStop(0, shadeHex(base, mul * 1.1));
+					g.addColorStop(1, shadeHex(base, mul * 0.85));
+				}
+				ctx.fillStyle = g;
+				ctx.fillRect(r.x, r.y, r.w, r.h);
+			});
+			// 2) subtle low-contrast mottle (skip glow + hard parts for crisp edges)
+			if (mottle > 0) jobs.forEach(({ r, base, glow, hard, mul }) => {
+				if (glow || hard) return;
+				const count = Math.max(1, Math.floor(r.w * r.h * 0.10));
+				for (let i = 0; i < count; i++) {
+					const px = r.x + (Math.random() * r.w | 0);
+					const py = r.y + (Math.random() * r.h | 0);
+					ctx.fillStyle = shadeHex(base, mul * (1 - mottle + Math.random() * mottle * 2));
+					ctx.fillRect(px, py, 1, Math.random() < 0.5 ? 2 : 1);
+				}
+			});
+			// 3) smooth-brush blur per island (skip glow + hard parts)
+			if (blurAmt > 0) jobs.forEach(({ r, glow, hard }) => {
+				if (!glow && !hard) blurRect(ctx, r.x, r.y, r.w, r.h, blurAmt);
+			});
+		}, { edit_name: 'MCP: smooth bake', no_undo: false });
+
+		Canvas.updateAll();
+		return { baked: true, cubes: cubes.length, faces: jobs.length, texture: serializeTexture(tex) };
 	},
 
 	// Paint specific cube faces using coordinates RELATIVE to each face's UV

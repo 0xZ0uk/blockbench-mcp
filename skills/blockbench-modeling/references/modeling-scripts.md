@@ -54,7 +54,7 @@ return {added:made.length};
 ```
 
 Anti-clip checklist: step ≈ width (small overlap only), unique outer depth per piece, don't stack
-two pieces at identical x,y,z. **Re-run `pack_uv` and the smooth bake after decorating.**
+two pieces at identical x,y,z. **Re-run `pack_uv` and the `smooth_bake` tool after decorating.**
 
 ## 3. Quick symmetry / geometry sanity probe
 

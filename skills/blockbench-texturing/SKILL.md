@@ -22,8 +22,8 @@ dirty grid. Think stylised low-poly (Synty-style), not retro pixel art.
 ## The smooth bake (the core of good textures)
 
 Assign the texture to every face, then bake a smooth shaded base per face and blur each island.
-The full parameterised script lives in `references/texturing-scripts.md` (bake + blur +
-rescale + export helpers). Structure:
+Call the `smooth_bake` tool (parameterised recipe: bake + blur + rescale/export helpers live
+there and in `references/texturing-scripts.md`). Structure:
 
 1. Assign texture to all faces (no gaps — `check_model` catches orphans).
 2. Per face: soft vertical gradient in the base colour + directional shading (up lighter ×~1.1,
@@ -39,7 +39,7 @@ vertical streaks on `up` faces before the blur.
 ## Palette discipline
 
 - Pick a small palette up front: 2-4 tones per material, one accent for glow. Name the mapping
-  in the bake script's `baseFor(name)` (cube-name → colour) so it's reproducible and editable.
+  in the bake's `colors` (cube-name regex → colour) so it's reproducible and editable.
 - Bodies/limbs often share the head's base colour; darker accents only at extremities. Don't
   default everything to brown.
 - Directional shading stays within the palette: derive light/dark tones from the base colour

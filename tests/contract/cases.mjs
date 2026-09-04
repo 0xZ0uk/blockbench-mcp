@@ -809,4 +809,52 @@ export const contractCases = [
     expect: "error",
     errorField: "bogus",
   },
+
+  // ---- ticket #27: smooth_bake native tool (promoted skill snippet) ----
+  // Same scope contract as detail_cubes; handler parity (gradient +
+  // mottle + per-island blur on a fixture model) is pinned in
+  // smooth-bake.test.mjs (real bridge handler, stubbed globals).
+  { id: "smooth-bake-default", ticket: "#27", tool: "smooth_bake", args: {}, expect: "ok" },
+  {
+    id: "smooth-bake-palette",
+    ticket: "#27",
+    tool: "smooth_bake",
+    args: {
+      base: "#6e4f30",
+      colors: [{ match: "leg|paw", color: "#5a3d22" }],
+      noise: 0.13,
+      blur: 0.55,
+    },
+    expect: "ok",
+  },
+  {
+    id: "smooth-bake-scope-selected",
+    ticket: "#27",
+    tool: "smooth_bake",
+    args: { scope: "selected", elements: ["body"] },
+    expect: "ok",
+  },
+  {
+    id: "smooth-bake-legacy-cubes",
+    ticket: "#27",
+    tool: "smooth_bake",
+    args: { cubes: "all", base: "#6e4a2b" },
+    expect: "ok",
+  },
+  {
+    id: "smooth-bake-cubes-type",
+    ticket: "#27",
+    tool: "smooth_bake",
+    args: { cubes: 123 },
+    expect: "error",
+    errorField: "cubes",
+  },
+  {
+    id: "smooth-bake-scope-bad",
+    ticket: "#27",
+    tool: "smooth_bake",
+    args: { scope: "everything" },
+    expect: "error",
+    errorField: "scope",
+  },
 ];

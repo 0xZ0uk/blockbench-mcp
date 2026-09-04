@@ -77,7 +77,7 @@ slightly exaggerated — realism is never the reference.
 - `free`/generic format; meshes welcome where the shape wants them (horns, blades, organic
   accents).
 - `pack_uv` after every batch; islands get room to breathe — blur needs pixel margins.
-- Smooth bake via script (or native `smooth_bake` once P1 lands); `paint_faces` for crisp
+- Native `smooth_bake` for the base coat; `paint_faces` for crisp
   features after the blur; `resize_texture` when packing overflows.
 - Exports: model JSON + PNG; engine uses bilinear filtering.
 
