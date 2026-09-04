@@ -83,8 +83,8 @@ correctly — especially head/neck signs — before exporting.
 
 - Before saving, reset to rest: `Modes.options.edit.select(); Timeline.setTime(0);` so the saved
   file shows the rest pose, not a mid-animation frame.
-- Export the model via `export_project` (the project format's codec). Animation JSON + texture
-  PNG export via `execute_script` with `Blockbench.writeFile` — snippet in
-  `references/animation-scripts.md`.
+- Export the model via `export_project` (the project format's codec). Animation JSON
+  exports via the `execute_script` snippet in `references/animation-scripts.md`;
+  texture PNGs export via the `export_textures` tool.
 - Animation channels are rotation/position/scale per bone; `list_animations` to inventory before
   exporting.

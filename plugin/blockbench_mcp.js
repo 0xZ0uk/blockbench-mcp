@@ -2976,6 +2976,73 @@ const commands = {
 		return serializeTexture(tex);
 	},
 
+	// Promoted skill-snippet texture export (ticket #28): writes project
+	// textures to disk via Blockbench.writeFile with savetype 'image' — the
+	// exact snippet behavior — with texture selection + optional destination.
+	// Single seam: the texturing skill references this tool instead of the
+	// snippet. Returns per-texture results so one bad ref never voids the
+	// batch (contract-suite style: {exported, failed, results[]}).
+	export_textures(p) {
+		requireProject();
+		if (p.texture != null && p.textures != null) {
+			throw new Error('Pass either "texture" or "textures", not both.');
+		}
+		let refs;
+		if (p.textures != null) {
+			refs = toList(p.textures);
+			if (!refs.length) throw new Error('Field "textures" must not be empty.');
+		} else if (p.texture != null) {
+			refs = [p.texture];
+		} else {
+			refs = (Texture.all || []).map((t) => t.uuid);
+		}
+		if (!refs.length) throw new Error('No textures to export. Create one first with create_texture.');
+		const hasPath = p.path != null;
+		const hasDir = p.directory != null;
+		if (hasPath && hasDir) throw new Error('Pass either "path" or "directory", not both.');
+		if (hasPath && refs.length > 1) {
+			throw new Error('Field "path" is for a single texture; pass "directory" to export multiple textures.');
+		}
+		const fileNameFor = (tex) => {
+			const base = String(tex.name || 'texture').replace(/[\\/]/g, '_');
+			return /\.png$/i.test(base) ? base : base + '.png';
+		};
+		const joinDir = (dir, file) => String(dir).replace(/[\\/]+$/, '') + '/' + file;
+		const defaultDir = () => {
+			const sp = Project.save_path || null;
+			if (!sp) {
+				throw new Error('Field "path" (or "directory") is required until the project is saved: save the project first or pass an explicit destination.');
+			}
+			return String(sp).split(/[\\/]/).slice(0, -1).join('/') || '.';
+		};
+		const fallbackDir = !hasPath && !hasDir ? defaultDir() : null;
+		const destFor = (tex) => {
+			if (hasPath) return p.path;
+			const dir = hasDir ? p.directory : fallbackDir;
+			return joinDir(dir, fileNameFor(tex));
+		};
+		const results = [];
+		for (const ref of refs) {
+			const tex = findTexture(ref);
+			if (!tex) {
+				results.push({ texture: String(ref), ok: false, error: 'Texture not found: ' + ref });
+				continue;
+			}
+			try {
+				const dest = destFor(tex);
+				Blockbench.writeFile(dest, { content: tex.getDataURL(), savetype: 'image' });
+				results.push({ texture: tex.name, uuid: tex.uuid, ok: true, path: dest });
+			} catch (e) {
+				results.push({ texture: tex.name, uuid: tex.uuid, ok: false, error: (e && e.message) || String(e) });
+			}
+		}
+		return {
+			exported: results.filter((r) => r.ok).length,
+			failed: results.filter((r) => !r.ok).length,
+			results,
+		};
+	},
+
 	// ---- animations -------------------------------------------------------
 	create_animation(p) {
 		requireProject();

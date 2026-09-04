@@ -77,13 +77,26 @@ return {size:TW};
 (`pack_uv` auto-grows the texture for box-UV layouts while preserving paint — usually you won't
 need this.)
 
-## 4. Export the texture PNG (no `require`!)
+## 4. Export the texture PNG — use the `export_textures` tool instead
 
-```js
-const tex=Texture.all[0];
-Blockbench.writeFile(params.png, { content: tex.getDataURL(), savetype:'image' });
-return { png:params.png };
+The server ships a first-class `export_textures` tool: it writes the selected
+project textures to disk via the same `tex.getDataURL()` + `Blockbench.writeFile`
+(`savetype:'image'`) bytes the old snippet hand-rolled. **Call it at the end of
+the texture lifecycle, after the bake + features.**
+
+```jsonc
+export_textures {
+  "directory": "<your-export-dir>"
+}
 ```
 
-Pass `params:{png:'<your-export-dir>/model.png'}` with an absolute path that exists on the
-machine running Blockbench. Geometry exports via the `export_project` tool.
+Select with `texture` (one uuid/name) or `textures[]` (several); omit both to
+export every project texture. Destination: `path` (absolute file, single
+texture only) or `directory` (each texture lands as `<texture-name>.png`); omit
+both to write alongside the project (its save-path directory — save first or
+pass an explicit destination). Returns per-texture
+`{exported, failed, results:[{texture, ok, path|error}]}`. (The retired
+`execute_script` body this replaces is intentionally not kept here — one seam:
+the tool is the export now.)
+
+Geometry exports via the `export_project` tool.

@@ -49,4 +49,4 @@ return { anim:params.anim };
 
 Pass `params:{anim:'<your-export-dir>/model.animation.json'}` with an absolute path on the
 machine running Blockbench. The structure follows the project format's animation codec. Geometry
-exports via the `export_project` tool; texture PNG via the texturing skill's export snippet.
+exports via the `export_project` tool; texture PNGs via the `export_textures` tool.

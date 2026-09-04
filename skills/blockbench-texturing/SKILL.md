@@ -69,4 +69,5 @@ socket/outline around an eye if it needs separation (that's design, not the dirt
   (`pack_uv` auto-grows for box-UV layouts).
 - `import_texture` for external art; `set_texture_render_mode` if the engine needs a specific
   alpha/render mode.
-- Export the PNG via `export_project`/script (`Blockbench.writeFile`, `savetype:'image'`).
+- Export the PNG via `export_textures` (texture selection + optional destination;
+  defaults to alongside the project).
