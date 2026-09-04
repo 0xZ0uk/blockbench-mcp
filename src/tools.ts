@@ -79,6 +79,42 @@ const cubeItemSchema = closedObj(
   ["from", "to"]
 );
 
+// ---- explicit scope convention (ticket #8) ----------------------------------
+// One shared selection contract for pack_uv, detail_cubes and paint_faces,
+// replacing the legacy `'all'` magic string so MCP clients stop mangling
+// `oneOf` unions. `scope` + `elements[]` validate cleanly; omitting `scope`
+// keeps today's behavior (stated outright in each tool description). The
+// bridge keeps tolerating the legacy `'all'` string during a deprecation
+// window: the legacy selector stays accepted but marked DEPRECATED while the
+// descriptions advertise the new contract.
+const SCOPE_VALUES = ["all", "selected"];
+const FACE_DIRECTIONS = ["north", "south", "east", "west", "up", "down"];
+/** Fresh {scope, elements} schema properties per tool (never shared by reference). */
+const scopeFields = (): Record<string, unknown> => ({
+  scope: {
+    type: "string",
+    enum: SCOPE_VALUES,
+    description:
+      "Which cubes to process: 'all' (the default when omitted — every cube) or 'selected' (only `elements[]`). Passing `elements[]` without `scope` implies 'selected'.",
+  },
+  elements: {
+    type: "array",
+    minItems: 1,
+    items: { type: "string" },
+    description:
+      "Cube names/uuids to process. Required when `scope` is 'selected' (the bridge rejects a missing or empty `elements` naming this field).",
+  },
+});
+/** Explicit face-direction selector: an enum, not a magic string in a union. */
+const faceProp = (): Record<string, unknown> => ({
+  oneOf: [
+    { type: "string", enum: [...FACE_DIRECTIONS, "all"] },
+    { type: "array", items: { type: "string", enum: FACE_DIRECTIONS } },
+  ],
+  description:
+    "Face direction(s): one of 'north'|'south'|'east'|'west'|'up'|'down', or an array of them. Omit to paint ALL faces (the default). The legacy 'all' string is deprecated but still accepted.",
+});
+
 function text(value: unknown): ContentBlock[] {
   const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return [{ type: "text", text: body }];
@@ -240,11 +276,13 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "pack_uv",
-    "Shelf-pack the box UVs so every cube gets its own region of the texture. REQUIRED before texturing a box_uv model (GeckoLib/Bedrock): newly created cubes all sit at uv_offset [0,0] and otherwise paint onto the same pixels. Re-run after adding or resizing cubes. Auto-grows the texture (preserving paint) if the layout overflows.",
+    "Shelf-pack the box UVs so every cube gets its own region of the texture. REQUIRED before texturing a box_uv model (GeckoLib/Bedrock): newly created cubes all sit at uv_offset [0,0] and otherwise paint onto the same pixels. Re-run after adding or resizing cubes. Auto-grows the texture (preserving paint) if the layout overflows. Scope default: omitted `scope` keeps today's behavior — ALL cubes (the legacy `cubes` selector still narrows it during deprecation).",
     obj({
+      ...scopeFields(),
       cubes: {
         oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-        description: "'all' (default), or specific cube names/uuids.",
+        description:
+          "DEPRECATED legacy selector (prefer `scope` + `elements[]`): the 'all' string or cube names/uuids. Still accepted during the deprecation window; ignored when `scope`/`elements[]` are given.",
       },
       padding: { type: "number", description: "Pixels between UV islands (default 1)." },
       auto_resize: { type: "boolean", description: "Grow the texture if packing overflows (default true)." },
@@ -522,11 +560,13 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "detail_cubes",
-    "SMOOTH base texturing — the @volmur/Hytale look. Assigns the texture to every chosen face (no untextured 'gaps'), then per face bakes a soft vertical gradient in the region colour + gentle directional shading (top lighter, underside darker) + a SUBTLE low-contrast mottle, and finally a 3x3 box blur per UV island (the 'smooth brush'). Run pack_uv FIRST, then this right after create_texture, then paint_faces for crisp features. Avoids the dirty/noisy/grid look (no hard edge outline, low noise by default). Cubes named *_core/*_glow are filled bright (emissive read).",
+    "SMOOTH base texturing — the @volmur/Hytale look. Assigns the texture to every chosen face (no untextured 'gaps'), then per face bakes a soft vertical gradient in the region colour + gentle directional shading (top lighter, underside darker) + a SUBTLE low-contrast mottle, and finally a 3x3 box blur per UV island (the 'smooth brush'). Run pack_uv FIRST, then this right after create_texture, then paint_faces for crisp features. Avoids the dirty/noisy/grid look (no hard edge outline, low noise by default). Cubes named *_core/*_glow are filled bright (emissive read). Scope default: omitted `scope` keeps today's behavior — ALL cubes (the legacy `cubes` selector still narrows it during deprecation).",
     obj({
+      ...scopeFields(),
       cubes: {
         oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-        description: "'all' (default), a single cube name/uuid, or an array of names/uuids to texture.",
+        description:
+          "DEPRECATED legacy selector (prefer `scope` + `elements[]`): the 'all' string, a single cube name/uuid, or an array of names/uuids. Still accepted during the deprecation window; ignored when `scope`/`elements[]` are given.",
       },
       texture: { type: "string", description: "Texture to paint on (defaults to the project's default texture)." },
       base: { type: "string", description: "Default base color, e.g. '#6e4a2b'. Used where no `colors` rule matches." },
@@ -546,13 +586,11 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "paint_faces",
-    "Paint features onto specific cube faces using coordinates RELATIVE to each face (so [0,0] is that face's top-left corner) — no manual UV math, which is what usually causes misplaced/garbled texture. Use it for eyes, nostrils, mouths, claws, fur tufts, stripes, scars, bandages, armour trim, etc. Either pass one {cube, face, base?, ops?} or a `faces` array of them.",
+    "Paint features onto specific cube faces using coordinates RELATIVE to each face (so [0,0] is that face's top-left corner) — no manual UV math, which is what usually causes misplaced/garbled texture. Use it for eyes, nostrils, mouths, claws, fur tufts, stripes, scars, bandages, armour trim, etc. Either pass one {cube, face, base?, ops?} or a `faces` array of them. Scope default: omitted `scope` keeps the single/batch form behavior; `scope` + `elements[]` paints the same face selection onto many cubes at once; omitted `face` paints ALL faces of the target cube(s). `faces` and `scope`/`elements[]` are mutually exclusive — the bridge rejects the mix naming `faces`.",
     obj({
+      ...scopeFields(),
       cube: { type: "string", description: "Cube uuid/name (single-face form)." },
-      face: {
-        oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-        description: "Face direction 'north'|'south'|'east'|'west'|'up'|'down', an array of them, or 'all' (single-face form).",
-      },
+      face: faceProp(),
       base: { type: "string", description: "Optional solid fill for the face before ops (CSS color)." },
       ops: { type: "array", description: "Paint ops (same types as paint_texture), coords relative to the face.", items: { type: "object" } },
       texture: { type: "string", description: "Texture to paint on / assign (defaults to the face's texture or the default)." },

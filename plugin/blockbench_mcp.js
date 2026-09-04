@@ -128,6 +128,43 @@ function toList(v) {
 	return v == null ? [] : [v];
 }
 
+/**
+ * Valid Blockbench face directions. The wire contract carries these as an
+ * explicit enum; anything else is ignored so unknown keys (including
+ * prototype names on direct HTTP calls) can never touch cube faces.
+ */
+const FACE_DIRS = ['north', 'south', 'east', 'west', 'up', 'down'];
+
+/**
+ * Explicit scope convention (ticket #8): `{ scope: 'all'|'selected', elements[] }`.
+ *
+ * Returns { mode: 'all' } (every cube) or { mode: 'selected', refs } (the
+ * `elements[]` refs), or { mode: 'legacy' } when neither `scope` nor
+ * `elements` is present — the caller then falls back to its legacy `cubes` /
+ * `'all'` handling, which stays tolerated during the deprecation window.
+ * An explicit `scope` always wins; `elements` without `scope` implies
+ * 'selected'. Errors name the offending field.
+ */
+function resolveScope(p) {
+	if (p.scope != null) {
+		if (p.scope !== 'all' && p.scope !== 'selected') {
+			throw new Error('Field "scope" must be "all" or "selected".');
+		}
+		if (p.scope === 'selected') {
+			const refs = toList(p.elements);
+			if (!refs.length) throw new Error('Field "elements" (array of cube names/uuids) is required when scope is "selected".');
+			return { mode: 'selected', refs };
+		}
+		return { mode: 'all' };
+	}
+	if (p.elements != null) {
+		const refs = toList(p.elements);
+		if (!refs.length) throw new Error('Field "elements" (array of cube names/uuids) must not be empty.');
+		return { mode: 'selected', refs };
+	}
+	return { mode: 'legacy' };
+}
+
 // ---------------------------------------------------------------------------
 // Serializers (strip THREE.js / circular data, keep what an AI can reason about)
 // ---------------------------------------------------------------------------
@@ -1319,7 +1356,10 @@ const commands = {
 	pack_uv(p) {
 		requireProject();
 		let cubes;
-		if (!p.cubes || p.cubes === 'all') cubes = Cube.all.slice();
+		const sel = resolveScope(p);
+		if (sel.mode === 'all') cubes = Cube.all.slice();
+		else if (sel.mode === 'selected') cubes = sel.refs.map(findElement).filter((c) => c instanceof Cube);
+		else if (!p.cubes || p.cubes === 'all') cubes = Cube.all.slice();
 		else cubes = toList(p.cubes).map(findElement).filter((c) => c instanceof Cube);
 		if (!cubes.length) throw new Error('No cubes to pack.');
 		const pad = p.padding != null ? p.padding | 0 : 1;
@@ -1927,7 +1967,10 @@ const commands = {
 		if (!tex) throw new Error('No texture to paint on. Create one first with create_texture.');
 
 		let cubes;
-		if (!p.cubes || p.cubes === 'all') cubes = Cube.all.slice();
+		const sel = resolveScope(p);
+		if (sel.mode === 'all') cubes = Cube.all.slice();
+		else if (sel.mode === 'selected') cubes = sel.refs.map(findElement).filter((c) => c instanceof Cube);
+		else if (!p.cubes || p.cubes === 'all') cubes = Cube.all.slice();
 		else cubes = toList(p.cubes).map(findElement).filter((c) => c instanceof Cube);
 		if (!cubes.length) throw new Error('No matching cubes.');
 
@@ -2022,14 +2065,25 @@ const commands = {
 	// UVs by hand — this is how you place eyes, nostrils, stripes, patterns, etc.
 	paint_faces(p) {
 		requireProject();
-		const items = p.faces
-			? toList(p.faces)
-			: [{ cube: p.cube, face: p.face, base: p.base, ops: p.ops, texture: p.texture }];
+		const sel = resolveScope(p);
+		let items;
+		if (sel.mode !== 'legacy') {
+			if (p.faces != null) throw new Error('Pass either "faces" or "scope"/"elements", not both.');
+			const cubes = sel.mode === 'all'
+				? Cube.all.slice()
+				: sel.refs.map(findElement).filter((c) => c instanceof Cube);
+			if (!cubes.length) throw new Error('No matching cubes.');
+			items = cubes.map((c) => ({ cube: c.uuid, face: p.face, base: p.base, ops: p.ops, texture: p.texture }));
+		} else {
+			items = p.faces
+				? toList(p.faces)
+				: [{ cube: p.cube, face: p.face, base: p.base, ops: p.ops, texture: p.texture }];
+		}
 		const byTex = new Map();
 		for (const it of items) {
 			const cube = findElement(it.cube);
 			if (!cube || !(cube instanceof Cube)) throw new Error('Cube not found: ' + it.cube);
-			const dirs = (!it.face || it.face === 'all') ? Object.keys(cube.faces) : toList(it.face);
+			const dirs = (!it.face || it.face === 'all') ? Object.keys(cube.faces) : toList(it.face).filter((d) => FACE_DIRS.indexOf(d) !== -1);
 			for (const dir of dirs) {
 				const face = cube.faces[dir];
 				if (!face) continue;
