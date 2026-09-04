@@ -12,7 +12,7 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 13 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 26 pass / 0 fail).
 - [ ] **Bridge status (read-only, shared-safe)** — Reach:
   `curl -s http://127.0.0.1:8787/ping` plus `get_status` over the bridge.
   Drive: curl, or MCP `tools/call get_status` with an owned stdio server.
@@ -33,12 +33,18 @@ never leave it to lie.
 - [ ] **Measure dims (`measure`, read-only)** — Reach: MCP `tools/call
   measure` (needs an open project for live numbers; stubbed in the
   contract suite). Drive: call `{mode:"element",element:"<name>"}`,
-  `{mode:"group",group:"<name>"}`, `{mode:"model"}`. Proved when: each
+  `{mode:"group",group:"<name>"}`, `{mode:"model"}`,
+  `{mode:"distance",a:"<name>",b:"<name>"}`, `{mode:"clearance"}`. Proved when: each
   result parses to `{mode, units:"model", min/max/size/center with {x,y,z}}`
   plus the resolved ref and `cube_count` (group adds `cubes[]` of
-  `{name, uuid}`, model adds `group_count`). Empty model returns `min`/`max`/`center` null with
+  `{name, uuid}`, model adds `group_count`); distance parses to
+  `{distance, gap:{x,y,z}, delta:{x,y,z}, overlapping}` with both boxes;
+  clearance parses to `{overlaps[], overlap_count, scanned_cubes,
+  coplanar_epsilon:0.02, overlap_min:0.1}` agreeing with `check_model`
+  coplanar pairs (pinned headless by `tests/contract/measure-math.test.mjs`,
+  which drives the real bridge handlers with stubbed Blockbench globals). Empty model returns `min`/`max`/`center` null with
   `size` `{x:0,y:0,z:0}` and `cube_count` 0; empty group errors naming
-  `group`. On an owned instance also cover: a cube with swapped `from`/`to`,
+  `group`; missing/unknown distance refs error naming `a`/`b`. On an owned instance also cover: a cube with swapped `from`/`to`,
   a nested group (grandchild cubes included), an empty group, and an empty
   model.
 - [ ] **Visual review (`screenshot_views`, owned-instance only)** — Reach:
