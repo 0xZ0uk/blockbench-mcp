@@ -1,15 +1,23 @@
 # Animation scripts (execute_script bodies)
 
-## 1. Preview an animation pose (then screenshot it)
+## 1. Preview an animation pose — use the `preview_pose` tool instead
 
-```js
-const a=Animation.all.find(x=>x.name===params.name);
-a.select(); Timeline.setTime(params.t); Animator.preview();
-return {animation:a.name, t:params.t};
+The server ships a first-class `preview_pose` tool: it selects the animation
+(uuid or name), sets the timeline to `time` seconds, and drives the pose
+preview — the exact recipe the old snippet below used to hand-roll.
+**Call it after `create_animation` / `add_keyframes`, before `screenshot_views`.**
+
+```jsonc
+preview_pose {
+  "animation": "<animation name>",
+  "time": 0.25
+}
 ```
 
-Pass `params:{name:'<animation name>', t:0.25}`. Then call `screenshot_views`. To return to the
-rest pose for saving: `Modes.options.edit.select(); Timeline.setTime(0); Canvas.updateAll();`
+Returns `{animation, uuid, time}`. To return to the rest pose for saving:
+`Modes.options.edit.select(); Timeline.setTime(0); Canvas.updateAll();`
+(The retired `execute_script` body this replaces is intentionally not kept
+here — one seam: the tool is the recipe now.)
 
 ## 2. Bulk keyframes from a compact table
 

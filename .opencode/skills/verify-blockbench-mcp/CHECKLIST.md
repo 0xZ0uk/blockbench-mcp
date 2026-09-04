@@ -6,10 +6,10 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-   or a one-off stdio script. Proved when: response lists 54 tools including
+   or a one-off stdio script. Proved when: response lists 55 tools including
    `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
    `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`,
-   `compare_views`, `smooth_bake`, `export_textures`.
+   `compare_views`, `smooth_bake`, `export_textures`, `preview_pose`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
    `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
@@ -17,7 +17,8 @@ never leave it to lie.
    105 tests / 0 fail, 108 contract cases; at ticket #26:
    115 tests / 0 fail, 118 contract cases; at ticket #27:
    122 tests / 0 fail, 124 contract cases; at ticket #28:
-   127 tests / 0 fail, 134 contract cases).
+   127 tests / 0 fail, 134 contract cases; at ticket #29:
+   132 tests / 0 fail, 141 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -139,8 +140,19 @@ never leave it to lie.
   errors name the remedy (no textures, `path` with several textures, unsaved
   project without an explicit destination) — pinned headless by
   `tests/contract/export-textures.test.mjs`, which drives the real bridge
-  handler with stubbed Blockbench globals. Live-Blockbench drive on an
-  owned instance is optional.
+   handler with stubbed Blockbench globals. Live-Blockbench drive on an
+   owned instance is optional.
+- [ ] **Pose preview (`preview_pose`, ticket #29)** — Reach: MCP
+  `tools/call preview_pose` (needs an open project with an animation; the bridge
+  handler is also pinned headless). Drive: call
+  `{animation:"<name>", time:0.25}` (name or uuid), then `screenshot_views`.
+  Proved when: the result parses to `{animation, uuid, time}` with the
+  animation selected, the timeline set to `time`, and the pose preview driven
+  (the snippet's `anim.select(); Timeline.setTime(t); Animator.preview();`
+  sequence), and unknown animations / missing args error naming `animation` /
+  `time` — pinned headless by `tests/contract/preview-pose.test.mjs`, which
+  drives the real bridge handler with stubbed Blockbench globals.
+  Live-Blockbench drive on an owned instance is optional.
 - [ ] **Pinned reference (`set_reference_image`, ticket #25)** — Reach: MCP
   `tools/call set_reference_image` (needs an open project; file paths need
   the desktop app, inline images work anywhere). Drive: pin `{view:"front",
