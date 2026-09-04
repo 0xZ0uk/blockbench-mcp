@@ -2,7 +2,7 @@
   "mcpServers": {
     "blockbench": {
       "command": "node",
-      "args": ["D:/projects/blockbench-mcp/dist/index.js"],
+      "args": ["dist/index.js"],
       "env": { "BLOCKBENCH_MCP_PORT": "8787" }
     }
   }
