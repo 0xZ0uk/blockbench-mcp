@@ -110,6 +110,12 @@ Bright emissive parts (eyes, lanterns, gems) are named `*_core` and kept clear o
 - Did I screenshot the SAME angle as the reference? Overlay them mentally.
 - Silhouette: same overall shape/stance? Head size & position? Limb length/thickness?
 - `check_model`: zero untextured faces / bad UVs / unparented cubes?
+- **Done-gate (check before `save_project`):** run `check_model` and require its
+  machine-readable `gate` to pass (`gate.gate_pass === true`, i.e. zero errors —
+  warnings like `no_texture` don't fail the gate). Separately, capture blueprint
+  side/front/top views at the pinned `px_per_unit` scale and confirm UVs don't
+  overlap. A failing gate only adds an advisory `warning` to `save_project` — saving
+  never blocks — so this checklist, not the save call, is what enforces done.
 - **If anything looks wrong in the screenshot, FIX it now.** Never call a visible flaw
   "acceptable" — that is the #1 mistake. Match the reference, not a lowered bar.
 

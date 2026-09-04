@@ -12,8 +12,8 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
     `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-    passing (tallies grow as cases are added; at ticket #22 post-rebase:
-    99 tests / 0 fail, 108 contract cases).
+    passing (tallies grow as cases are added; at ticket #23:
+    105 tests / 0 fail, 108 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -50,7 +50,18 @@ never leave it to lie.
   done-gate `gate: {errors, warnings, gate_pass}` — errors =
   degenerate_size + zero_uv + uv_out_of_bounds + coplanar_overlap,
   warnings = no_texture + no_bone_parent, `gate_pass` true iff errors == 0
-  (table-driven by `tests/contract/gate-summary.test.mjs`).
+   (table-driven by `tests/contract/gate-summary.test.mjs`).
+- [ ] **Done-gate advisory on save (`save_project` warning, ticket #23)** —
+  Reach: MCP `tools/call save_project` (mutating — owned instance only for
+  live drive; pinned headless). Drive: `check_model` on a failing model,
+  then `save_project`. Proved when: the save result parses to
+  `{saved:true, path, warning}` with `warning` naming the error count and
+  the gate; after a passing check (or with no prior check) the same call
+  returns `{saved:true, path}` with no `warning` key — saving never fails
+  or blocks on gate state (pinned by
+  `tests/contract/done-gate.test.mjs`, which drives the real bridge
+  handlers with stubbed Blockbench globals). Live-Blockbench drive on an
+  owned instance is optional.
 - [ ] **Bulk edit/delete (`edit_elements` / `delete_elements`, stubbed)** — Reach: MCP
   `tools/call edit_elements` / `delete_elements` with the bridge stubbed (contract suite)
   or an owned stdio server over in-memory transport. Drive: call with
