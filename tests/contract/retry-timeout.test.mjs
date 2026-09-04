@@ -45,15 +45,17 @@ test("timeout then success: retried once with the identical request, result retu
   });
 
   const result = await callBlockbench("add_cubes", { cubes: [{ name: "a" }] }, 1234);
-  assert.deepEqual(result, { created: 1 });
+  assert.deepStrictEqual(result, { created: 1 });
   assert.equal(calls.length, 2, "exactly one retry, no more");
   const [first, second] = bodiesOf(calls);
-  assert.deepEqual(second, first, "retry re-sends the identical request");
+  assert.deepStrictEqual(second, first, "retry re-sends the identical request");
   assert.equal(first.action, "add_cubes");
-  assert.deepEqual(first.params, { cubes: [{ name: "a" }] });
+  assert.deepStrictEqual(first.params, { cubes: [{ name: "a" }] });
   for (const [url, init] of calls) {
     assert.ok(String(url).endsWith("/command"));
     assert.equal(init.method, "POST");
+    assert.equal(init.headers["Content-Type"], "application/json");
+    assert.ok(init.signal instanceof AbortSignal, "each attempt gets its own abort signal");
   }
 });
 
@@ -73,9 +75,22 @@ test("double timeout: surfaces the existing timeout error after exactly two atte
   );
   assert.equal(calls.length, 2, "no infinite retry, no exponential machinery");
 });
-
-test("bridge-reported error: NOT retried", async (t) => {
+test("timeout then bridge error: retry happens once, second-attempt error surfaces", async (t) => {
   const calls = [];
+  globalThis.fetch = async (...args) => {
+    calls.push(args);
+    if (calls.length === 1) throw abortRejection();
+    return bridgeErrorResponse("bad cube spec");
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  await assert.rejects(() => callBlockbench("add_cubes", {}, 1234), /bad cube spec/);
+  assert.equal(calls.length, 2, "one retry, then stop — no further attempts");
+});
+
+test("bridge-reported error: NOT retried", async (t) => {  const calls = [];
   globalThis.fetch = async (...args) => {
     calls.push(args);
     return bridgeErrorResponse("bad cube spec");
