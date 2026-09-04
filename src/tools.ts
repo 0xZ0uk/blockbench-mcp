@@ -784,6 +784,37 @@ export const tools: ToolDef[] = [
       return blocks;
     },
   },
+  forward(
+    "set_reference_image",
+    "Pin a reference image against a blueprint view so later passes can compare work against it with data instead of eyeballing screenshots (the pinning half of the reference-compare loop; the comparison tool follows). `view` uses the same camera semantics as screenshot_views views: a preset id string ('front','back','left','right','top','bottom','isometric_right_front',...) or an explicit {position:[x,y,z], target:[x,y,z]}. `source` is an image file path (Blockbench desktop app) or an inline image ('data:image/...;base64,...' or raw base64); an empty string unpins the view. Pinning again replaces the stored reference. Returns the stored state so you can read back what is pinned: {view, pinned:true, mime, bytes} with the canonical view key, or {view, pinned:false} after unpin.",
+    closedObj(
+      {
+        view: {
+          oneOf: [
+            {
+              type: "string",
+              description: "Blueprint camera preset id (same presets as screenshot_views).",
+            },
+            closedObj(
+              {
+                position: vec3("Camera position [x,y,z]."),
+                target: vec3("Look-at target [x,y,z]."),
+              },
+              ["position", "target"]
+            ),
+          ],
+          description:
+            "Which view to pin the reference against: a preset id or an explicit {position, target}.",
+        },
+        source: {
+          type: "string",
+          description:
+            "Reference image: an image file path or inline image data ('data:image/...;base64,...' or raw base64). Empty string unpins the view.",
+        },
+      },
+      ["view", "source"]
+    )
+  ),
 
   // ===== plugins ===========================================================
   forward(

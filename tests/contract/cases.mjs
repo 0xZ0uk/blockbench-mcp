@@ -701,4 +701,50 @@ export const contractCases = [
     expect: "error",
     errorField: "bogus",
   },
+
+  // ---- ticket #25: set_reference_image pin/unpin ----
+  // Pin per view (preset id or explicit {position,target}) from a path or
+  // inline image; empty source unpins. Handler round-trip (pin -> readable
+  // state, unpin -> cleared) plus bridge error fields are pinned in
+  // set-reference-image.test.mjs (real bridge handler, stubbed globals).
+  {
+    id: "set-reference-preset-inline",
+    ticket: "#25",
+    tool: "set_reference_image",
+    args: {
+      view: "front",
+      source:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    },
+    expect: "ok",
+  },
+  {
+    id: "set-reference-explicit-view",
+    ticket: "#25",
+    tool: "set_reference_image",
+    args: { view: { position: [0, 8, 32], target: [0, 8, 0] }, source: "/tmp/ref-front.png" },
+    expect: "ok",
+  },
+  {
+    id: "set-reference-unpin-empty",
+    ticket: "#25",
+    tool: "set_reference_image",
+    args: { view: "front", source: "" },
+    expect: "ok",
+  },
+  { id: "set-reference-missing-view", ticket: "#25", tool: "set_reference_image", args: { source: "" }, expect: "error", errorField: "view" },
+  { id: "set-reference-missing-source", ticket: "#25", tool: "set_reference_image", args: { view: "front" }, expect: "error", errorField: "source" },
+  { id: "set-reference-view-type", ticket: "#25", tool: "set_reference_image", args: { view: 42, source: "" }, expect: "error", errorField: "view" },
+  { id: "set-reference-view-empty-object", ticket: "#25", tool: "set_reference_image", args: { view: {}, source: "" }, expect: "error", errorField: "view" },
+  { id: "set-reference-view-partial", ticket: "#25", tool: "set_reference_image", args: { view: { position: [0, 0, 0] }, source: "" }, expect: "error", errorField: "view" },
+  { id: "set-reference-view-array", ticket: "#25", tool: "set_reference_image", args: { view: ["front"], source: "" }, expect: "error", errorField: "view" },
+  { id: "set-reference-source-type", ticket: "#25", tool: "set_reference_image", args: { view: "front", source: 42 }, expect: "error", errorField: "source" },
+  {
+    id: "set-reference-unknown-prop",
+    ticket: "#25",
+    tool: "set_reference_image",
+    args: { view: "front", source: "", bogus: 1 },
+    expect: "error",
+    errorField: "bogus",
+  },
 ];
