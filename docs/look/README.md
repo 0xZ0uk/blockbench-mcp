@@ -4,8 +4,14 @@ One folder, one idea: **aesthetic specs for Blockbench work.**
 
 - [`spec.md`](spec.md) — the LOOK.md format specification: what a look file is and isn't,
   the token schema, canonical sections, and how to write one.
-- [`LOOK-PS1.md`](LOOK-PS1.md) — worked example: a PS1-style look (tiny point-filtered
-  textures, tight palette, chunky flat-shaded geometry).
+- [`LOOK-PS1.md`](LOOK-PS1.md) — PS1 style: tiny point-filtered textures, tight palette,
+  chunky flat-shaded geometry.
+- [`LOOK-Minecraft.md`](LOOK-Minecraft.md) — vanilla Minecraft: minimal cubes, 1 unit =
+  1 texel, detail in the texture.
+- [`LOOK-Hytale.md`](LOOK-Hytale.md) — Hytale: cubes + quads only, 32px-multiple textures,
+  readable personalities (per the official art guide).
+- [`LOOK-Handpainted.md`](LOOK-Handpainted.md) — stylized hand-painted (WoW/LoL lineage):
+  smooth baked gradients, painted light, rest areas.
 
 ## What this is
 
