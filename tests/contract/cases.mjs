@@ -58,6 +58,34 @@ export const contractCases = [
     },
     expect: "ok",
   },
+  {
+    id: "add-cubes-dedupe",
+    ticket: "#19",
+    tool: "add_cubes",
+    args: {
+      dedupe_by_name: true,
+      cubes: [{ name: "slide-a", from: [0, 0, 0], to: [4, 2, 4] }],
+    },
+    expect: "ok",
+  },
+  {
+    id: "add-groups-dedupe",
+    ticket: "#19",
+    tool: "add_groups",
+    args: { dedupe_by_name: true, groups: [{ name: "slide" }] },
+    expect: "ok",
+  },
+  {
+    id: "add-cubes-dedupe-bad-type",
+    ticket: "#19",
+    tool: "add_cubes",
+    args: {
+      dedupe_by_name: "yes",
+      cubes: [{ name: "slide-a", from: [0, 0, 0], to: [4, 2, 4] }],
+    },
+    expect: "error",
+    errorField: "dedupe_by_name",
+  },
   { id: "pack-uv-default", ticket: "#2", tool: "pack_uv", args: {}, expect: "ok" },
   {
     id: "pack-uv-all-string",

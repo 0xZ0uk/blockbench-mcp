@@ -114,6 +114,12 @@ const faceProp = (): Record<string, unknown> => ({
   description:
     "Face direction(s): one of 'north'|'south'|'east'|'west'|'up'|'down', or an array of them. Omit to paint ALL faces (the default). The legacy 'all' string is deprecated but still accepted.",
 });
+/** Retry-safe bulk creation option (ticket #19): shared shape, fresh object per tool. */
+const dedupeByNameProp = (): Record<string, unknown> => ({
+  type: "boolean",
+  description:
+    "Retry-safe idempotent mode: when true, an item whose name matches an existing element of the same kind is updated in place instead of created again (its result carries `updated:true`; a retried call never duplicates geometry). Items without a `name` share the default key ('cube'/'group') and collapse into one element. Omit to keep the legacy create-always behavior.",
+});
 
 function text(value: unknown): ContentBlock[] {
   const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -243,7 +249,7 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "add_groups",
-    "Create many bones/groups in one call — the fast way to lay out a whole skeleton. Pass `groups`: an array of {name, origin, rotation, parent}. A group's `parent` may reference another group created earlier in the SAME call by name, so you can build a nested, pre-posed bone hierarchy at once.",
+    "Create many bones/groups in one call — the fast way to lay out a whole skeleton. Pass `groups`: an array of {name, origin, rotation, parent}. A group's `parent` may reference another group created earlier in the SAME call by name, so you can build a nested, pre-posed bone hierarchy at once. Set `dedupe_by_name:true` for retry-safe creation: a group whose name already exists is updated in place (result carries `updated:true`) instead of duplicated.",
     obj(
       {
         groups: {
@@ -251,13 +257,14 @@ export const tools: ToolDef[] = [
           description: "Array of group specs: {name, origin:[x,y,z], rotation:[x,y,z], parent:name|uuid}.",
           items: groupItemSchema,
         },
+        dedupe_by_name: dedupeByNameProp(),
       },
       ["groups"]
     )
   ),
   forward(
     "add_cubes",
-    "Create many cubes in one call — the efficient way to author a detailed model (aim for 20-50+ cubes for a creature, not 6-8). Pass `cubes`: an array where each item takes the same fields as add_cube ({name, from, to, origin, rotation, inflate, parent, box_uv, uv_offset, faces}). Build symmetric parts by emitting both the left side and its mirror (negate X, flip Y/Z rotation signs) in the same array. AVOID Z-FIGHTING: when cubes overlap, make one clearly penetrate the other (by >=0.1) and never align two faces to the exact same coordinate; stagger decorative pieces' depths. Returns all created cubes with their face UVs.",
+    "Create many cubes in one call — the efficient way to author a detailed model (aim for 20-50+ cubes for a creature, not 6-8). Pass `cubes`: an array where each item takes the same fields as add_cube ({name, from, to, origin, rotation, inflate, parent, box_uv, uv_offset, faces}). Build symmetric parts by emitting both the left side and its mirror (negate X, flip Y/Z rotation signs) in the same array. AVOID Z-FIGHTING: when cubes overlap, make one clearly penetrate the other (by >=0.1) and never align two faces to the exact same coordinate; stagger decorative pieces' depths. Returns all created cubes with their face UVs. Set `dedupe_by_name:true` for retry-safe creation: a cube whose name already exists is updated in place (result carries `updated:true`) instead of duplicated — a timed-out and retried call never creates double geometry.",
     obj(
       {
         cubes: {
@@ -265,6 +272,7 @@ export const tools: ToolDef[] = [
           description: "Array of cube specs (each like add_cube's args).",
           items: cubeItemSchema,
         },
+        dedupe_by_name: dedupeByNameProp(),
       },
       ["cubes"]
     )
