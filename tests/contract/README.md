@@ -43,8 +43,13 @@ transport code exercised is the production MCP request wiring).
    `{ id, ticket, tool, args, expect: "ok" | "error", errorField? }`.
 2. Keep cases at the tool-contract boundary only (schemas + handler
    results). Do not assert coercion helpers, packers, or serializers.
-3. Run `npm test`. Green is the gate.
+3. The one sanctioned second seam is the doc-reference guard
+   (`doc-refs.mjs` service + `doc-refs.test.mjs`): it asserts skill/doc
+   tool-ids resolve against the published registry and repo-path mentions
+   exist on disk. Doc-guard changes belong there, never in the tool table.
+4. Run `npm test`. Green is the gate.
 
 No new transport or storage seams: this directory (`validator.mjs`,
-`cases.mjs`, `runner.mjs`, `contract.test.mjs`, `mcp-transport.test.mjs`) is
+`cases.mjs`, `runner.mjs`, `contract.test.mjs`, `mcp-transport.test.mjs`,
+plus the doc-reference guard `doc-refs.mjs` + `doc-refs.test.mjs`) is
 the single seam.

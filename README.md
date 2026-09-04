@@ -57,7 +57,7 @@ There are two pieces:
 - 🧠 **Guidance** — `get_guide` returns a modeling/texturing playbook so the AI builds detailed, rotated models instead of a few flat boxes.
 - 🧩 **Plugins** — search, install (by store id, URL, or file) and uninstall Blockbench plugins, so the AI can set up formats like GeckoLib itself.
 - 🔧 **Escape hatch** — `execute_script` runs arbitrary Blockbench JS for anything not covered by a dedicated tool.
-- 🟢 **40 tools** total, all over a single local connection.
+- 🟢 **55 tools** total, all over a single local connection.
 
 ## Requirements
 
@@ -173,9 +173,9 @@ agent — they are not required for the MCP itself:
 | `blockbench-texturing` | Texturing/UV work | `pack_uv` discipline, smooth bake, palettes, glow cores, feature painting |
 | `blockbench-animation` | Rigging/animating | Joint pivots, rotation signs, walk/run/attack/idle recipes, export hygiene |
 
-Each folder is self-contained (`SKILL.md` + `references/`). For clients that want a zip, run
-`node skills/build-zips.mjs` (regenerates every `skills/<name>.zip` deterministically), then
-upload the zip or point the client at the folder. See `skills/INSTALL.md`.
+Each folder is self-contained (`SKILL.md` + `references/`). Point the client at the
+folder (or zip it yourself, e.g. `zip -r blockbench-modeling.zip blockbench-modeling/`
+from `skills/`). See `skills/INSTALL.md`.
 
 ## Tool reference
 
