@@ -57,7 +57,7 @@ There are two pieces:
 - 🧠 **Guidance** — `get_guide` returns a modeling/texturing playbook so the AI builds detailed, rotated models instead of a few flat boxes.
 - 🧩 **Plugins** — search, install (by store id, URL, or file) and uninstall Blockbench plugins, so the AI can set up formats like GeckoLib itself.
 - 🔧 **Escape hatch** — `execute_script` runs arbitrary Blockbench JS for anything not covered by a dedicated tool.
-- 🟢 **40 tools** total, all over a single local connection.
+- 🟢 **55 tools** total, all over a single local connection.
 
 ## Requirements
 
@@ -173,9 +173,9 @@ agent — they are not required for the MCP itself:
 | `blockbench-texturing` | Texturing/UV work | `pack_uv` discipline, smooth bake, palettes, glow cores, feature painting |
 | `blockbench-animation` | Rigging/animating | Joint pivots, rotation signs, walk/run/attack/idle recipes, export hygiene |
 
-Each folder is self-contained (`SKILL.md` + `references/`). For clients that want a zip, run
-`node skills/build-zips.mjs` (regenerates every `skills/<name>.zip` deterministically), then
-upload the zip or point the client at the folder. See `skills/INSTALL.md`.
+Each folder is self-contained (`SKILL.md` + `references/`). Point the client at the
+folder (or zip it yourself, e.g. `zip -r blockbench-modeling.zip blockbench-modeling/`
+from `skills/`). See `skills/INSTALL.md`.
 
 ## Tool reference
 
@@ -183,8 +183,8 @@ upload the zip or point the client at the folder. See `skills/INSTALL.md`.
 |-------|-------|
 | **Status & guidance** | `get_status`, `get_guide`, `list_formats` |
 | **Project** | `new_project`, `set_project_meta`, `save_project`, `export_project`, `load_project`, `close_project` |
-| **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `edit_element`, `edit_elements`, `delete_element`, `delete_elements`, `list_outliner`, `query_elements`, `get_element`, `measure`, `check_model` |
-| **UV & textures** | `create_texture`, `paint_texture`, `smooth_bake`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `export_textures`, `list_textures`, `get_texture` |
+| **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `add_plane`, `add_mesh`, `mirror_element`, `edit_element`, `edit_elements`, `delete_element`, `delete_elements`, `list_outliner`, `query_elements`, `get_element`, `measure`, `check_model` |
+| **UV & textures** | `pack_uv`, `create_texture`, `create_vfx_texture`, `set_texture_render_mode`, `paint_texture`, `smooth_bake`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `export_textures`, `list_textures`, `get_texture` |
 | **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `preview_pose`, `list_animations`, `remove_animation` |
 | **View** | `set_camera_angle`, `screenshot`, `screenshot_views`, `set_reference_image`, `compare_views` |
 | **Plugins** | `list_plugins`, `install_plugin`, `uninstall_plugin` |

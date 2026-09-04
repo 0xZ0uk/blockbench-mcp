@@ -18,7 +18,8 @@ never leave it to lie.
    115 tests / 0 fail, 118 contract cases; at ticket #27:
    122 tests / 0 fail, 124 contract cases; at ticket #28:
    127 tests / 0 fail, 134 contract cases; at ticket #29:
-   132 tests / 0 fail, 141 contract cases).
+   132 tests / 0 fail, 141 contract cases; at ticket #48:
+   153 tests / 0 fail, 141 contract cases + 11 doc-ref validator tests).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
