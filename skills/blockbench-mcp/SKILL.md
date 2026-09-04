@@ -70,7 +70,8 @@ Iterate at least 2-3 passes. The first pass is never good enough.
 - Texture: `pack_uv`, `set_cube_uv`, `create_texture`, `smooth_bake` (palette-first base coat),
   `detail_cubes` (base coat + streaks/edge-darkening knobs),
   `paint_faces` (features, face-relative coords), `paint_texture`, `apply_texture`,
-  `import_texture`, `resize_texture`, `list_textures`, `get_texture`,
+  `import_texture`, `resize_texture`, `export_textures` (PNG export to disk),
+  `list_textures`, `get_texture`,
   `create_vfx_texture`, `set_texture_render_mode`.
 - Review: `screenshot`, `screenshot_views` (multi-angle), `check_model`.
 - Animate: `create_animation`, `add_keyframe(s)`, `list_animations`, `remove_animation`.

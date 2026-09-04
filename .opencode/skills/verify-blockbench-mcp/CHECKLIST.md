@@ -6,17 +6,18 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-   or a one-off stdio script. Proved when: response lists 53 tools including
+   or a one-off stdio script. Proved when: response lists 54 tools including
    `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
    `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`,
-   `compare_views`, `smooth_bake`.
+   `compare_views`, `smooth_bake`, `export_textures`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
    `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
    passing (tallies grow as cases are added; at ticket #23:
    105 tests / 0 fail, 108 contract cases; at ticket #26:
    115 tests / 0 fail, 118 contract cases; at ticket #27:
-   122 tests / 0 fail, 124 contract cases).
+   122 tests / 0 fail, 124 contract cases; at ticket #28:
+   127 tests / 0 fail, 134 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -124,8 +125,22 @@ never leave it to lie.
   (`*_core`) and hard parts (`*_cap`/`*_base`/chains/cords) crisp (no
   mottle/blur), and errors naming the remedy (no texture, no matching cubes)
   — pinned headless by `tests/contract/smooth-bake.test.mjs`, which drives
-  the real bridge handler with stubbed Blockbench globals. Live-Blockbench
-  drive on an owned instance is optional.
+   the real bridge handler with stubbed Blockbench globals. Live-Blockbench drive on
+   an owned instance is optional.
+- [ ] **Texture export (`export_textures`, ticket #28)** — Reach: MCP
+  `tools/call export_textures` (needs an open project with a texture; the bridge
+  handler is also pinned headless). Drive: call `{}` (every texture, alongside
+  the project), `{texture:"<name>", path:"<abs-file>"}` (single),
+  `{textures:["<a>","<b>"], directory:"<abs-dir>"}` (several). Proved when: the
+  result parses to `{exported, failed, results[]}` with per-texture
+  `{texture, uuid, ok:true, path}` vs `{texture, ok:false, error}` (one bad ref
+  never voids the batch), files are written through `Blockbench.writeFile`
+  with the texture's data URL (`savetype:'image'` — the snippet's bytes), and
+  errors name the remedy (no textures, `path` with several textures, unsaved
+  project without an explicit destination) — pinned headless by
+  `tests/contract/export-textures.test.mjs`, which drives the real bridge
+  handler with stubbed Blockbench globals. Live-Blockbench drive on an
+  owned instance is optional.
 - [ ] **Pinned reference (`set_reference_image`, ticket #25)** — Reach: MCP
   `tools/call set_reference_image` (needs an open project; file paths need
   the desktop app, inline images work anywhere). Drive: pin `{view:"front",

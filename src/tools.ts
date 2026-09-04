@@ -687,6 +687,21 @@ export const tools: ToolDef[] = [
       "height",
     ])
   ),
+  forward(
+    "export_textures",
+    "Export project textures to PNG files on disk — the promoted texturing-skill snippet as a native tool (ticket #28). Writes each texture via its data URL (same bytes the snippet's `tex.getDataURL()` + `Blockbench.writeFile` path writes). Texture selection: `texture` (one uuid/name) or `textures[]` (several); omit both to export every project texture. Destination: `path` (absolute file path, single-texture only) or `directory` (absolute directory; files are written as `<texture-name>.png`); omit both to write alongside the project (the directory of its save path — save the project first or pass an explicit destination). Returns per-texture results {exported, failed, results:[{texture, uuid?, ok, path?|error?}]} so one bad ref never voids the batch.",
+    closedObj({
+      texture: { type: "string", description: "uuid or name of one texture to export." },
+      textures: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string" },
+        description: "Several textures to export by uuid/name. Mutually exclusive with `texture`.",
+      },
+      path: { type: "string", description: "Absolute destination file path (single-texture exports only)." },
+      directory: { type: "string", description: "Absolute destination directory; each texture is written as `<texture-name>.png`." },
+    })
+  ),
 
   // ===== animations ========================================================
   forward(

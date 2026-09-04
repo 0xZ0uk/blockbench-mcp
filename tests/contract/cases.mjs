@@ -857,4 +857,79 @@ export const contractCases = [
     expect: "error",
     errorField: "scope",
   },
+
+  // ---- ticket #28: export_textures native tool (promoted skill snippet) ----
+  // Texture selection + optional destination; handler parity (same data-URL
+  // bytes the snippet wrote, per-texture ok/error) is pinned in
+  // export-textures.test.mjs (real bridge handler, stubbed globals).
+  { id: "export-textures-default", ticket: "#28", tool: "export_textures", args: {}, expect: "ok" },
+  {
+    id: "export-textures-single",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { texture: "tex" },
+    expect: "ok",
+  },
+  {
+    id: "export-textures-multi-dir",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { textures: ["a", "b"], directory: "/tmp/out" },
+    expect: "ok",
+  },
+  {
+    id: "export-textures-single-path",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { texture: "a", path: "/tmp/out/a.png" },
+    expect: "ok",
+  },
+  {
+    id: "export-textures-texture-type",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { texture: 123 },
+    expect: "error",
+    errorField: "texture",
+  },
+  {
+    id: "export-textures-textures-type",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { textures: "a" },
+    expect: "error",
+    errorField: "textures",
+  },
+  {
+    id: "export-textures-textures-empty",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { textures: [] },
+    expect: "error",
+    errorField: "textures",
+  },
+  {
+    id: "export-textures-path-type",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { path: 123 },
+    expect: "error",
+    errorField: "path",
+  },
+  {
+    id: "export-textures-directory-type",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { directory: 123 },
+    expect: "error",
+    errorField: "directory",
+  },
+  {
+    id: "export-textures-unknown-prop",
+    ticket: "#28",
+    tool: "export_textures",
+    args: { bogus: 1 },
+    expect: "error",
+    errorField: "bogus",
+  },
 ];
