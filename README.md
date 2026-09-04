@@ -138,6 +138,23 @@ root; on Windows `cd` prints it too):
 | `BLOCKBENCH_MCP_PORT` | `8787` | Must match the plugin's port setting. |
 | `BLOCKBENCH_MCP_HOST` | `127.0.0.1` | Bridge host. |
 
+## Skills
+
+The `skills/` folder ships agent skills that encode the proven modeling workflow (proportions,
+smooth-bake texturing, rigging, review discipline) on top of these tools. Install them into your
+agent — they are not required for the MCP itself:
+
+| Skill | Loads when | Contents |
+|-------|------------|----------|
+| `blockbench-mcp` | Any Blockbench MCP session | Connection check, golden build-review loop, tool map, cross-cutting gotchas |
+| `blockbench-modeling` | Building shape/geometry | Silhouette-first discipline, proportion templates, mesh primitives, hierarchy |
+| `blockbench-texturing` | Texturing/UV work | `pack_uv` discipline, smooth bake, palettes, glow cores, feature painting |
+| `blockbench-animation` | Rigging/animating | Joint pivots, rotation signs, walk/run/attack/idle recipes, export hygiene |
+
+Each folder is self-contained (`SKILL.md` + `references/`). For clients that want a zip, run
+`node skills/build-zips.mjs` (regenerates every `skills/<name>.zip` deterministically), then
+upload the zip or point the client at the folder. See `skills/INSTALL.md`.
+
 ## Tool reference
 
 | Group | Tools |

@@ -1,47 +1,15 @@
-# Workflow & ready-to-paste execute_script snippets
+# Texturing scripts (execute_script bodies)
 
-All snippets below are the **body** of an `execute_script` call (the `code` argument). They run
-inside Blockbench with the full API (`Project, Cube, Group, Texture, Animation, Undo, Canvas,
-Outliner, Format, Blockbench, Modes, Timeline, Animator`, ...). Adapt names/colours, then run.
+Snippets are the **body** of an `execute_script` call (the `code` argument). They run inside
+Blockbench with the full API. Adapt names/colours, then run. Every mutation is wrapped in
+`Undo.initEdit` / `Undo.finishEdit` — keep that pattern.
 
----
+## 1. Smooth texture bake (the core of "good textures")
 
-## 1. Pack box UVs (REQUIRED before texturing)
-
-New box-UV cubes all overlap at `[0,0]`. This shelf-packs them and updates each cube's faces.
-Run it after every batch of `add_cubes` / resize. If `used_height` exceeds the texture height,
-raise the texture size (see snippet 5) and re-run.
-
-```js
-const TW = Project.texture_width, pad = 1;
-const items = Cube.all.map(c => {
-  const w=Math.ceil(Math.abs(c.to[0]-c.from[0])),
-        h=Math.ceil(Math.abs(c.to[1]-c.from[1])),
-        d=Math.ceil(Math.abs(c.to[2]-c.from[2]));
-  return { c, fw: 2*(w+d), fh: (h+d) };           // box-UV footprint
-}).sort((a,b)=> b.fh-a.fh);                         // tallest first = tighter packing
-Undo.initEdit({ elements: Cube.all, uv_only: true });
-let x=0,y=0,rowH=0,maxX=0;
-for (const it of items){
-  if (x+it.fw+pad > TW){ x=0; y+=rowH+pad; rowH=0; }
-  it.c.box_uv = true; it.c.uv_offset = [x,y];
-  if (it.c.mapAutoUV) it.c.mapAutoUV();             // recompute the 6 face UVs from uv_offset
-  x += it.fw+pad; rowH = Math.max(rowH, it.fh); maxX = Math.max(maxX, x);
-}
-Undo.finishEdit('pack uv'); Canvas.updateAll();
-return { packed: items.length, used: [maxX, y+rowH], tex: [TW, Project.texture_height] };
-```
-
-Footprint math: a cube of size (w,h,d) unwraps to `2*(w+d)` wide and `(h+d)` tall, in texture
-pixels (1 unit = 1 px when `uv_width == texture_width`).
-
----
-
-## 2. Smooth texture bake (the core of "good textures")
-
-Assigns the texture to every face (no gaps), then bakes a smooth, shaded base per face and
-blurs each island. Edit `baseFor(name)` to map cube-name → colour. Cubes named `*_core` are
-treated as emissive/glow. Paint crisp features AFTER this (snippet 3).
+Assigns the texture to every face (no gaps), then bakes a smooth, shaded base per face and blurs
+each island. Edit `baseFor(name)` to map cube-name → colour. Cubes named `*_core` are treated as
+emissive/glow. Paint crisp features AFTER this (snippet 2). Run `pack_uv` BEFORE this so islands
+don't overlap.
 
 ```js
 const tex = Texture.all[0];
@@ -54,11 +22,11 @@ const cl=v=>v<0?0:v>255?255:v|0;
 const shade=(hex,f)=>{const c=hexToRgb(hex);return 'rgb('+cl(c.r*f)+','+cl(c.g*f)+','+cl(c.b*f)+')';};
 const rectOf=f=>{const u=f.uv;return{x:Math.round(Math.min(u[0],u[2])),y:Math.round(Math.min(u[1],u[3])),w:Math.round(Math.abs(u[2]-u[0])),h:Math.round(Math.abs(u[3]-u[1]))};};
 
-// ---- EDIT THIS: cube-name -> base colour ----
+// ---- EDIT THIS: cube-name -> base colour (your palette) ----
 const GREENS=['#5f7a2e','#6d8a38','#7c9442','#56702a','#849a48'];
 const isGlow = n => /_core$/.test(n);
 function baseFor(n){
-  if(isGlow(n))                 return '#3fe0d6';   // teal glow
+  if(isGlow(n))                 return '#3fe0d6';   // teal glow accent
   if(/_cap$|_base$|chain|cord/.test(n)) return '#2a2620'; // dark frame/links
   if(/antler|branch/.test(n))   return '#6b4a2e';   // wood brown
   if(/leaf|moss/.test(n))       return GREENS[(Math.random()*GREENS.length)|0];
@@ -104,11 +72,10 @@ return {baked:true, cubes:Cube.all.length};
 Tuning: pale/smooth surfaces -> lower mottle (`*0.06`, amplitude `0.10`); fur/foliage -> higher.
 For grizzled backs add a few darker vertical streaks on `up` faces before the blur.
 
----
+## 2. Paint crisp features (eyes / nose / claws) — run AFTER the bake
 
-## 3. Paint crisp features (eyes / nose / claws) — run AFTER the bake
-
-Operate on a specific cube face using its UV rect; coordinates are face-relative.
+Operate on a specific cube face using its UV rect; coordinates are face-relative. (The
+`mcp__blockbench__paint_faces` tool does the same without a script.)
 
 ```js
 const tex=Texture.all[0];
@@ -116,7 +83,6 @@ const rectOf=f=>{const u=f.uv;return{x:Math.round(Math.min(u[0],u[2])),y:Math.ro
 const head=Cube.all.find(c=>c.name==='head'); const r=rectOf(head.faces.north);
 tex.edit((canvas)=>{ const ctx=canvas.getContext('2d'); ctx.imageSmoothingEnabled=false;
   const X=r.x,Y=r.y,W=r.w;
-  ctx.fillStyle='rgba(0,0,0,0)';
   // glowing teal almond eyes
   const eye=cx=>{ const cy=4;
     ctx.fillStyle='#0c1817'; ctx.fillRect(X+cx-1,Y+cy-1,4,6);   // dark socket
@@ -128,34 +94,9 @@ tex.edit((canvas)=>{ const ctx=canvas.getContext('2d'); ctx.imageSmoothingEnable
 Canvas.updateAll(); return {ok:true};
 ```
 
-The `mcp__blockbench__paint_faces` tool does the same with face-relative coords if you prefer
-not to script it.
+## 3. Resize the texture (when packing overflows — preserves paint)
 
----
-
-## 4. Procedural decoration (leaves / scales / fur tufts)
-
-Generate many small decorative cubes around a body. KEEP CLIPPING LOW: few overlaps + stagger
-each piece's outer depth so faces don't z-fight.
-
-```js
-const body=Group.all.find(g=>g.name==='body');
-Undo.initEdit({outliner:true, elements:[]});
-let n=0; const made=[]; const j=a=>(Math.random()*2-1)*a;
-const mk=(p,x,y,z,w,h,d)=>{ const c=new Cube({name:'leaf'+(n++),from:[x,y,z],to:[x+w,y+h,z+d],box_uv:true,autouv:0}).init(); c.addTo(p); made.push(c); return c; };
-// shingled rows on the BACK face (z=3), staggered depth avoids z-fighting:
-[20,16.5,13,9.5,6].forEach((y,ri)=>{ const off=(ri%2)*1.2, prot=(ri%2)?1.7:1.3;
-  for(let i=0;i<5;i++) mk(body, -5.8+off+i*2.45, y+j(0.12), 2.9, 2.9, 4.0, prot + i*0.07); });
-Undo.finishEdit('decorate'); Canvas.updateAll();
-return {added:made.length};
-```
-
-Then re-run snippet 1 (pack) and snippet 2 (bake). Anti-clip checklist: step ≈ width (small
-overlap only), unique outer depth per piece, don't stack two pieces at identical x,y,z.
-
----
-
-## 5. Resize the texture (when packing overflows)
+Prefer the `resize_texture` tool. Script form when you need custom fill:
 
 ```js
 const TW=160; Project.texture_width=TW; Project.texture_height=TW;
@@ -166,29 +107,16 @@ tex.width=TW; tex.height=TW; tex.updateSource(c.toDataURL());
 return {size:TW};
 ```
 
----
+(`pack_uv` auto-grows the texture for box-UV layouts while preserving paint — usually you won't
+need this.)
 
-## 6. Preview an animation pose (then screenshot it)
-
-```js
-const a=Animation.all.find(x=>x.name===params.name);
-a.select(); Timeline.setTime(params.t); Animator.preview();
-return {animation:a.name, t:params.t};
-```
-Pass `params:{name:'animation.x.walk', t:0.25}`. Then call `screenshot_views`. To return to the
-rest pose for saving: `Modes.options.edit.select(); Timeline.setTime(0); Canvas.updateAll();`
-
----
-
-## 7. Export texture PNG + animation JSON (no `require`!)
+## 4. Export the texture PNG (no `require`!)
 
 ```js
 const tex=Texture.all[0];
 Blockbench.writeFile(params.png, { content: tex.getDataURL(), savetype:'image' });
-const built=Animator.buildFile(undefined,false);
-const content=typeof built==='string'?built:JSON.stringify(built,null,2);
-Blockbench.writeFile(params.anim, { content, savetype:'text' });
-return { png:params.png, anim:params.anim };
+return { png:params.png };
 ```
-Pass `params:{png:'<your-export-dir>/model.png', anim:'<your-export-dir>/model.animation.json'}` with an absolute path that exists on the machine running Blockbench. Geometry itself is
-exported with the `export_project` tool.
+
+Pass `params:{png:'<your-export-dir>/model.png'}` with an absolute path that exists on the
+machine running Blockbench. Geometry exports via the `export_project` tool.
