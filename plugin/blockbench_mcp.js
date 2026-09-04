@@ -1627,6 +1627,93 @@ const GUIDES = {
 // Command handlers
 // ---------------------------------------------------------------------------
 
+/**
+ * execute_script structured errors (ticket #30 service layer).
+ * The escape hatch stays debuggable: failures name the phase (compile vs
+ * runtime), a 1-based line hint into the USER's `code` (offset-compensated
+ * for the Function wrapper), and a truncated message. The raw multi-KB
+ * stack never leaves the bridge payload — full diagnostics stay in the
+ * Blockbench console via console.error at the throw site.
+ *
+ * Wrapper layout (hence EXEC_SCRIPT_LINE_OFFSET = 3):
+ *   1: function anonymous(params,Blockbench
+ *   2: ) {
+ *   3: "use strict";
+ *   4: <user line 1> ...
+ * so userLine = reportedLine - 3 (clamped to >= 1).
+ */
+const EXEC_SCRIPT_MAX_CHARS = 2000;
+const EXEC_SCRIPT_MAX_MESSAGE = 1000;
+const EXEC_SCRIPT_LINE_OFFSET = 3;
+
+function truncateText(s, max) {
+	if (typeof s !== 'string') s = String(s == null ? '' : s);
+	if (s.length <= max) return s;
+	return s.slice(0, Math.max(0, max - 3)) + '...';
+}
+
+/**
+ * First <anonymous>:LINE frame mapped into user lines. Returns null when
+ * the stack carries no user frame (notably SyntaxError from `new Function`,
+ * which V8 reports without a line).
+ */
+function executeScriptLineFromStack(stack) {
+	if (typeof stack !== 'string' || !stack) return null;
+	const re = /<anonymous>:(\d+):\d+/g;
+	let m;
+	while ((m = re.exec(stack)) !== null) {
+		const reported = parseInt(m[1], 10);
+		if (isNaN(reported)) continue;
+		if (reported > EXEC_SCRIPT_LINE_OFFSET) return reported - EXEC_SCRIPT_LINE_OFFSET;
+	}
+	return null;
+}
+
+/**
+ * Best-effort compile line: first 1-based prefix of `code` that fails to
+ * compile. Works for localized errors (e.g. `const b = ;` on line 2 with a
+ * valid line 1). Falls back to 1 when every prefix compiles (should not
+ * happen for a real SyntaxError) or nothing compiles.
+ */
+function executeScriptCompileLine(code) {
+	const lines = String(code == null ? '' : code).split('\n');
+	// Bound the prefix scan so a huge script cannot turn one compile error
+	// into thousands of extra compilations; beyond the cap fall back to 1.
+	const capped = Math.min(lines.length, 500);
+	for (let i = 1; i <= capped; i++) {
+		const prefix = lines.slice(0, i).join('\n');
+		try {
+			new Function('params', 'Blockbench', '"use strict";\n' + prefix);
+		} catch (e) {
+			return i;
+		}
+	}
+	return 1;
+}
+
+/**
+ * Build the structured Error thrown for an execute_script failure.
+ * Message shape (also the MCP-visible text): `execute_script <phase> error
+ * at line <line>: <truncated message>`. Carries `.phase` / `.line` so the
+ * HTTP layer can forward them as fields without the raw stack.
+ */
+function formatExecuteScriptError(err, phase, code) {
+	const rawMessage = err && err.message != null ? String(err.message) : String(err);
+	let line = executeScriptLineFromStack(err && err.stack);
+	if (line == null && phase === 'compile') {
+		try { line = executeScriptCompileLine(code); } catch (e) { line = 1; }
+	}
+	if (line == null) line = 1;
+	if (!(line >= 1)) line = 1;
+	const message = truncateText(rawMessage, EXEC_SCRIPT_MAX_MESSAGE);
+	const out = new Error(
+		truncateText('execute_script ' + phase + ' error at line ' + line + ': ' + message, EXEC_SCRIPT_MAX_CHARS)
+	);
+	out.phase = phase;
+	out.line = line;
+	return out;
+}
+
 const commands = {
 
 	// ---- status & info ----------------------------------------------------
@@ -3389,17 +3476,35 @@ const commands = {
 	// ---- escape hatch -----------------------------------------------------
 	execute_script(p) {
 		if (!p.code) throw new Error('code is required');
-		const fn = new Function('params', 'Blockbench', '"use strict";\n' + p.code);
-		const result = fn(p.params || {}, Blockbench);
-		return Promise.resolve(result).then((r) => {
-			// Best-effort safe serialization.
-			try {
-				JSON.stringify(r);
-				return r;
-			} catch (e) {
-				return { value: String(r) };
+		let fn;
+		try {
+			fn = new Function('params', 'Blockbench', '"use strict";\n' + p.code);
+		} catch (err) {
+			console.error('[BlockbenchMCP] execute_script compile failed:', err);
+			throw formatExecuteScriptError(err, 'compile', p.code);
+		}
+		let result;
+		try {
+			result = fn(p.params || {}, Blockbench);
+		} catch (err) {
+			console.error('[BlockbenchMCP] execute_script runtime failed:', err);
+			throw formatExecuteScriptError(err, 'runtime', p.code);
+		}
+		return Promise.resolve(result).then(
+			(r) => {
+				// Best-effort safe serialization.
+				try {
+					JSON.stringify(r);
+					return r;
+				} catch (e) {
+					return { value: String(r) };
+				}
+			},
+			(err) => {
+				console.error('[BlockbenchMCP] execute_script async rejection:', err);
+				throw formatExecuteScriptError(err, 'runtime', p.code);
 			}
-		});
+		);
 	},
 };
 
@@ -3485,12 +3590,23 @@ async function handleRequest(socket, method, path, body) {
 			writeResponse(socket, 200, { ok: true, id: payload.id, result });
 		} catch (err) {
 			console.error('[BlockbenchMCP] command failed:', payload && payload.action, err);
-			writeResponse(socket, 200, {
+			// Ticket #30: execute_script errors are already linted + truncated
+			// (phase/line/message, no raw stack). Full diagnostics stay in the
+			// console above; the wire payload stays bounded. Other commands
+			// keep their stack, truncated to the same bound.
+			const isScriptError = !!err && (err.phase === 'compile' || err.phase === 'runtime');
+			const body = {
 				ok: false,
 				id: payload && payload.id,
-				error: err && err.message ? err.message : String(err),
-				stack: err && err.stack ? String(err.stack) : undefined,
-			});
+				error: truncateText(err && err.message ? err.message : String(err), EXEC_SCRIPT_MAX_CHARS),
+			};
+			if (isScriptError) {
+				body.phase = err.phase;
+				body.line = err.line;
+			} else if (err && err.stack) {
+				body.stack = truncateText(String(err.stack), EXEC_SCRIPT_MAX_CHARS);
+			}
+			writeResponse(socket, 200, body);
 		}
 	} catch (e) {
 		try { writeResponse(socket, 500, { ok: false, error: String(e) }); } catch (_) {}

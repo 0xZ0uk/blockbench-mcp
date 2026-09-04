@@ -13,6 +13,45 @@ export interface CommandResponse {
   result?: unknown;
   error?: string;
   stack?: string;
+  /** execute_script structured failure phase (ticket #30): compile vs runtime. */
+  phase?: string;
+  /** 1-based line hint into the user's `code` (wrapper-offset compensated). */
+  line?: number;
+}
+
+/**
+ * Bounded MCP error payload (ticket #30): the raw multi-kilobyte stack
+ * never reaches the model — the bridge omits it for execute_script and
+ * truncates it elsewhere, and this client truncates the surfaced message
+ * as defense-in-depth. Must stay in sync with the plugin's
+ * EXEC_SCRIPT_MAX_CHARS.
+ */
+export const MAX_BRIDGE_ERROR_CHARS = 2000;
+
+function truncateBridgeText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return value.slice(0, Math.max(0, max - 3)) + "...";
+}
+
+/**
+ * Shape a bridge `{ok:false}` payload into the Error thrown to tool
+ * handlers (and hence to MCP `isError` text). Structured execute_script
+ * failures already arrive as `execute_script <phase> error at line <n>: …`;
+ * older builds without `phase`/`line` pass through truncated unchanged.
+ */
+export function formatBridgeError(action: string, data: CommandResponse): Error {
+  const raw = data.error || `Command "${action}" failed.`;
+  let message = String(raw);
+  const phase = data.phase === "compile" || data.phase === "runtime" ? data.phase : null;
+  if (phase && !message.includes(`execute_script ${phase}`)) {
+    const linePart = typeof data.line === "number" && Number.isFinite(data.line) ? ` at line ${data.line}` : "";
+    message = `execute_script ${phase} error${linePart}: ${message}`;
+  }
+  message = truncateBridgeText(message, MAX_BRIDGE_ERROR_CHARS);
+  const err = new Error(message) as Error & { phase?: string; line?: number };
+  if (phase) err.phase = phase;
+  if (typeof data.line === "number" && Number.isFinite(data.line)) err.line = data.line;
+  return err;
 }
 
 let requestCounter = 0;
@@ -59,7 +98,7 @@ async function attemptSend(
 
   const data = (await response.json()) as CommandResponse;
   if (!data.ok) {
-    throw new Error(data.error || `Command "${action}" failed.`);
+    throw formatBridgeError(action, data);
   }
   return data.result;
 }

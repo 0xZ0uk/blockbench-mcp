@@ -960,7 +960,7 @@ export const tools: ToolDef[] = [
   // ===== escape hatch ======================================================
   forward(
     "execute_script",
-    "Run arbitrary JavaScript inside Blockbench's renderer for anything not covered by a dedicated tool. The code has access to all Blockbench globals (Project, Cube, Group, Texture, Animation, Undo, Canvas, Outliner, Format, Formats, ...) and receives a `params` object. Return a JSON-serializable value. Use sparingly; prefer dedicated tools.",
+    "Run arbitrary JavaScript inside Blockbench's renderer for anything not covered by a dedicated tool. The code has access to all Blockbench globals (Project, Cube, Group, Texture, Animation, Undo, Canvas, Outliner, Format, Formats, ...) and receives a `params` object. Return a JSON-serializable value. Use sparingly; prefer dedicated tools. Failures are structured and truncated: `execute_script <compile|runtime> error at line <n>: <message>` with the line hint into your `code` (async rejections report as runtime); the raw stack stays in the Blockbench console, never in the MCP result.",
     obj(
       {
         code: {
