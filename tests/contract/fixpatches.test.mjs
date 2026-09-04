@@ -186,6 +186,19 @@ const cases = [
     },
   },
   {
+    id: "uv-out-of-bounds-clamps-min-side",
+    kind: "uv_out_of_bounds",
+    cubes: [{ name: "head", from: [0, 0, 0], to: [2, 2, 2], faces: { up: { texture: "uuid-skin", uv: [-3, 2, 2, 5] } } }],
+    setup: { textures: [{ name: "skin" }] },
+    assert(audit) {
+      const issue = issueOf(audit, "uv_out_of_bounds");
+      assert.ok(issue, "uv_out_of_bounds must be reported");
+      assert.equal(issue.fix.tool, "set_cube_uv");
+      assert.deepEqual(plain(issue.fix.fix), { cube: "head", faces: { up: { uv: [0, 2, 2, 5] } } });
+      return issue;
+    },
+  },
+  {
     id: "uv-out-of-bounds-degenerate-clamp-omits",
     kind: "uv_out_of_bounds",
     cubes: [{ name: "head", from: [0, 0, 0], to: [2, 2, 2], faces: { up: { texture: "uuid-skin", uv: [20, 0, 24, 8] } } }],

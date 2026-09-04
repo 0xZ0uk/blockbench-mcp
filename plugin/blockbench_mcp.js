@@ -1965,7 +1965,9 @@ const commands = {
 	// safe patch can be derived (zero-area UVs, ambiguous texture/bone choice),
 	// `fix` is omitted rather than guessed. Fixes per kind:
 	// - coplanar_overlap: nudge the second cube by OVERLAP_MIN on the reported
-	//   axis via edit_elements (batch form, one edit).
+	//   axis via edit_elements (batch form, one edit). NOTE: full-state
+	//   from/to patches don't compose across issues sharing a cube — before
+	//   any auto-apply follow-up, accumulate per-cube deltas instead.
 	// - no_texture: assign the project's single texture to just the flagged face
 	//   via set_cube_uv (per-face, so other faces keep their textures).
 	// - uv_out_of_bounds: clamp the UV rect into [0..tw, 0..th] via set_cube_uv,
