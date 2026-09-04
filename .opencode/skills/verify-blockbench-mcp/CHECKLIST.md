@@ -6,14 +6,14 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-  or a one-off stdio script. Proved when: response lists 50 tools including
-  `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
-  `edit_elements`, `delete_elements`, `measure`, `query_elements`.
+   or a one-off stdio script. Proved when: response lists 51 tools including
+   `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
+   `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
-  `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; at ticket #24 post-rebase:
-  73 tests / 0 fail, 97 contract cases).
+   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
+   passing (tallies grow as cases are added; at ticket #25 post-rebase:
+   81 tests / 0 fail, 108 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -93,6 +93,18 @@ never leave it to lie.
   `{view, ortho?, px_per_unit?, wireframe?}` overrides call-level flags.
   Proved when: one PNG per requested view exists on
   disk and each is a non-empty image; summary text ends
-  `(projection restored)` and each `View:` line names its blueprint flags.
-  Untested without an owned instance —
-  record `untested + reason`, never silent.
+   `(projection restored)` and each `View:` line names its blueprint flags.
+   Untested without an owned instance —
+   record `untested + reason`, never silent.
+- [ ] **Pinned reference (`set_reference_image`, ticket #25)** — Reach: MCP
+  `tools/call set_reference_image` (needs an open project; file paths need
+  the desktop app, inline images work anywhere). Drive: pin `{view:"front",
+  source:"data:image/png;base64,..."}` (or a file path), re-pin the same
+  view, then unpin with `{view:"front", source:""}`. Proved when: pin
+  returns `{view:"preset:front", pinned:true, mime, bytes}`, re-pin
+  replaces (new `bytes`), and unpin returns `{view, pinned:false}`
+  (idempotent); missing files / undecodable images / bad views error
+  naming `source` / `view` — pinned headless by
+  `tests/contract/set-reference-image.test.mjs`, which drives the real
+  bridge handler with stubbed Blockbench globals. Live-Blockbench drive on
+  an owned instance is optional.

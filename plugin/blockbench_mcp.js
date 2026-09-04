@@ -606,6 +606,120 @@ function applyBlueprintSettings(preview, bp) {
 	}
 }
 
+/**
+ * Reference-image pinning mechanics (ticket #25 service layer). One image
+ * per blueprint view, keyed by camera identity (preset id or explicit
+ * position/target — the same camera semantics as screenshot_views). Stored
+ * on the reload-surviving global handle so pins outlive a plugin reload;
+ * the follow-on compare_views ticket reads this store. Callers own when to
+ * pin/unpin; these helpers own only keying, decoding, and validation.
+ */
+function referenceStore() {
+	if (!G.reference_images || typeof G.reference_images !== 'object') G.reference_images = {};
+	return G.reference_images;
+}
+
+/** Canonical store key for one `view` (preset id string or {position,target}). */
+function referenceViewKey(view) {
+	const bp = normalizeBlueprintView(view, {});
+	// Both halves are required: a one-sided object would pin under a
+	// malformed key (pos(..)->tgt()), and the schema advertises the pair —
+	// the bridge is the enforcement point (args are forwarded raw).
+	if (bp.position && bp.target) {
+		const fmt = (a) => (Array.isArray(a) ? a.map((n) => {
+			if (typeof n !== 'number' || !isFinite(n)) throw new Error('Field "view" position/target must be finite numbers [x,y,z].');
+			return String(n);
+		}).join(',') : '');
+		return `pos(${fmt(bp.position)})->tgt(${fmt(bp.target)})`;
+	}
+	if (typeof bp.presetName === 'string' && bp.presetName.trim() !== '') return `preset:${bp.presetName.trim()}`;
+	throw new Error('Field "view" must be a camera preset id string or {position, target}.');
+}
+
+/** Sniff image bytes for a known container; returns the mime or null. */
+function sniffImageMime(buf) {
+	if (!buf || buf.length < 12) return null;
+	if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 &&
+		buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A) return 'image/png';
+	if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+	if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'image/gif';
+	if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+	if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+		buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+	return null;
+}
+
+const REFERENCE_MAX_BYTES = 32 * 1024 * 1024;
+// Base64 expands 3 bytes into 4 chars: reject absurd payloads before decode.
+const REFERENCE_MAX_B64 = 4 * Math.ceil(REFERENCE_MAX_BYTES / 3) + 8;
+
+/** Normalize decoded bytes into a stored reference; throws naming "source" when undecodable. */
+function toReferenceImage(buf, origin) {
+	if (!buf || !buf.length) throw new Error(`Field "source" is not a decodable image${origin}: expected PNG/JPEG/GIF/BMP/WebP bytes.`);
+	if (buf.length > REFERENCE_MAX_BYTES) throw new Error(`Field "source" image is too large${origin} (${buf.length} bytes, max ${REFERENCE_MAX_BYTES}).`);
+	const mime = sniffImageMime(buf);
+	if (!mime) throw new Error(`Field "source" is not a decodable image${origin}: expected PNG/JPEG/GIF/BMP/WebP bytes.`);
+	const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+	return { data_url: `data:${mime};base64,${bytes.toString('base64')}`, mime, bytes: bytes.length };
+}
+
+/** Decode a base64 payload with a pre-decode length cap; null when not decodable. */
+function decodeBase64Capped(b64) {
+	const clean = String(b64).replace(/\s+/g, '');
+	if (clean.length > REFERENCE_MAX_B64) {
+		throw new Error(`Field "source" image is too large (inline image, max ${REFERENCE_MAX_BYTES} bytes).`);
+	}
+	// Buffer.from(str, 'base64') never throws (it skips invalid chars), so an
+	// empty result is the only failure signal.
+	const buf = Buffer.from(clean, 'base64');
+	return buf.length ? buf : null;
+}
+
+/**
+ * Resolve a `source` string into a stored reference. Accepts an inline
+ * `data:image/...;base64,...` URL, raw base64, or (desktop app) a file path.
+ * Returns null for an empty source (the unpin signal). Throws naming "source".
+ */
+function resolveReferenceSource(source) {
+	if (typeof source !== 'string') throw new Error('Field "source" must be a string: an image file path, inline image data, or "" to unpin.');
+	const src = source.trim();
+	if (src === '') return null;
+	if (/^data:/i.test(src)) {
+		const m = src.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/s);
+		if (!m) throw new Error('Field "source" inline image must be a data:image/...;base64,... URL, raw base64, or a file path.');
+		return toReferenceImage(decodeBase64Capped(m[2]), ' (inline image)');
+	}
+	// File path (desktop app): stat first so an oversized file fails before
+	// it is read into memory; fall back to raw base64 below so a non-path
+	// string still gets a precise undecodable error instead of ENOENT.
+	let fileBytes = null, fileError = null;
+	try {
+		const fs = require('fs');
+		const st = fs.statSync(src);
+		if (!st.isFile()) throw Object.assign(new Error(`EISDIR: not a file, stat '${src}'`), { code: 'EISDIR' });
+		if (st.size > REFERENCE_MAX_BYTES) throw new Error(`Field "source" image is too large (file ${src}, ${st.size} bytes, max ${REFERENCE_MAX_BYTES}).`);
+		fileBytes = fs.readFileSync(src);
+	} catch (e) { fileError = e; }
+	if (fileError && /^Field "source" image is too large/.test(fileError.message)) throw fileError;
+	if (fileBytes) return toReferenceImage(fileBytes, ` (file ${src})`);
+	if (/^[A-Za-z0-9+/=\s]+$/.test(src) && src.replace(/\s+/g, '').length >= 16) {
+		const buf = decodeBase64Capped(src);
+		// A decodable-but-not-an-image payload keeps its precise error.
+		if (buf) return toReferenceImage(buf, ' (inline image)');
+	}
+	const code = String((fileError && fileError.code) || (fileError && fileError.message) || '');
+	if (/ENOENT|ENOTDIR/i.test(code)) {
+		throw new Error(`Field "source" file not found: ${src}. Pass an existing image path or inline image data.`);
+	}
+	if (/EISDIR/i.test(code)) {
+		throw new Error(`Field "source" is not a file: ${src}. Pass an image file path or inline image data.`);
+	}
+	if (/EACCES|EPERM/i.test(code)) {
+		throw new Error(`Field "source" file is not readable: ${src}. Check permissions or pass inline image data.`);
+	}
+	throw new Error('Field "source" must be an existing image file path or inline image data (data:image/...;base64,... or raw base64).');
+}
+
 /** Run a list of drawing operations against a 2D canvas context. */
 function applyPaintOps(ctx, ops) {
 	for (const op of ops) {
@@ -2752,6 +2866,27 @@ const commands = {
 			const allRestored = shots.every((s) => s.projection_restored);
 			return { count: shots.length, shots, projection_restored: allRestored };
 		})();
+	},
+
+	// Pin a reference image against one blueprint view (ticket #25, the
+	// pinning half of the reference-compare loop; compare_views follows).
+	// `view` is a camera preset id or {position,target} (same camera
+	// semantics as screenshot_views views). `source` is an image file path
+	// (desktop app) or inline image data; "" unpins. Pinning again replaces
+	// the stored reference. Returns the stored state so clients can read
+	// back what is pinned: {view, pinned:true, mime, bytes} or {view,
+	// pinned:false} after unpin.
+	set_reference_image(p) {
+		requireProject();
+		const key = referenceViewKey(p && p.view);
+		const ref = resolveReferenceSource(p ? p.source : undefined);
+		const store = referenceStore();
+		if (!ref) {
+			delete store[key];
+			return { view: key, pinned: false };
+		}
+		store[key] = ref;
+		return { view: key, pinned: true, mime: ref.mime, bytes: ref.bytes };
 	},
 
 	// A compact playbook the AI can read before building, so models come out
