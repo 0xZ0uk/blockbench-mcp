@@ -443,6 +443,16 @@ export const tools: ToolDef[] = [
     obj({ element: { type: "string" } }, ["element"])
   ),
   forward(
+    "query_elements",
+    "Find elements on large models without dumping the whole outliner: filter-first, paged lookups returning directly addressable refs. Filters: `regex` — case-insensitive regular expression matched against element/group names (e.g. '^leg|arm_'); `parent` — only elements whose DIRECT parent group is this (name or uuid; nested descendants are not included). Paging: `limit` (positive integer, default ALL matches) and `offset` (non-negative integer, default 0). Returns {refs:[{name,uuid}], total, offset} where `total` is the match count BEFORE pagination, so page honestly: while offset + refs.length < total, fetch the next page with offset += limit. Every ref is usable verbatim as `element` in edit_element/edit_elements/delete_element(s) and as name-or-uuid in measure (groups included). This is the primary way to find targets on large models — prefer it over list_outliner dumps (list_outliner stays as the legacy full-tree dump).",
+    closedObj({
+      regex: { type: "string", description: "Case-insensitive regex tested against element/group names." },
+      parent: { type: "string", description: "Direct parent group, by uuid or name; only its own children are returned." },
+      limit: { type: "integer", description: "Positive integer; max refs on this page (default: all matches)." },
+      offset: { type: "integer", description: "Non-negative integer; number of matches to skip (default 0)." },
+    })
+  ),
+  forward(
     "measure",
     "Measure verifiable dimensions in model units with named axes (x/y/z). Modes: element (one cube's bounding box — e.g. verify 'slide length = 24'), group (bounding box of a group/bone including all descendant cubes — e.g. slide assembly dims in one call), model (overall model dims, no manual aggregation), distance (gap between two refs `a`/`b` — e.g. slide-to-frame clearance as a number), clearance (coplanar-overlap scan reusing the check_model audit thresholds, with the epsilon echoed back). Element/group/a/b refs are name-or-UUID like get_element. Boxes are the axis-aligned union of cube from/to (rotation is not expanded — matches the viewport's axis readout for unrotated precision parts). Returns {mode, units:'model', min/max/size/center with {x,y,z}} plus the resolved ref and cube_count (group results also list the composed cubes as {name, uuid} so follow-up calls stay addressable). Distance returns {distance, gap:{x,y,z}, delta:{x,y,z}, overlapping} plus both boxes — `overlapping` is plain interval intersection (touching counts), not the z-fight threshold, so it can disagree with clearance on near-touching pairs by design. Clearance returns {overlaps[], overlap_count, scanned_cubes, coplanar_epsilon, overlap_min} with the same 0.02/0.1 semantics as check_model; like check_model it considers unrotated cubes in local space only (a cube inside a rotated group is still read by its local from/to) and caps the reported pairs at 80, so a model with more coplanar pairs underreports overlap_count/overlaps[] with no other signal. Edge cases: an empty model returns min/max/center null with size {x:0,y:0,z:0} and cube_count 0; a group with no measurable cubes returns a field-named error for \"group\".",
     obj(

@@ -6,13 +6,14 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-  or a one-off stdio script. Proved when: response lists 49 tools including
+  or a one-off stdio script. Proved when: response lists 50 tools including
   `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
-  `edit_elements`, `delete_elements`, `measure`.
+  `edit_elements`, `delete_elements`, `measure`, `query_elements`.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 48 pass / 0 fail).
+  passing (tallies grow as cases are added; at ticket #24 post-rebase:
+  73 tests / 0 fail, 97 contract cases).
 - [ ] **Version consistency + shipped-config portability** — Reach: MCP
   stdio `initialize` handshake, plus `tests/contract/version.test.mjs`.
   Drive: spawn `node dist/index.js`, send `initialize`, read
@@ -70,6 +71,20 @@ never leave it to lie.
   `group`; missing/unknown distance refs error naming `a`/`b`. On an owned instance also cover: a cube with swapped `from`/`to`,
   a nested group (grandchild cubes included), an empty group, and an empty
   model.
+- [ ] **Paged element lookup (`query_elements`, read-only)** — Reach: MCP
+  `tools/call query_elements` (shared-safe against any open project; the
+  bridge handler is also pinned headless). Drive: call `{}` (all nodes),
+  `{regex:"^leg"}`, `{parent:"<bone>"}`, `{limit:5, offset:5}`. Proved when:
+  the result parses to `{refs:[{name,uuid}], total, offset}` with `total`
+  the match count BEFORE pagination (page while `offset + refs.length <
+  total`), refs resolve verbatim in `edit_element`/`edit_elements`/
+  `measure`, and errors name the field (bad `regex`, unknown `parent`,
+  non-positive-integer `limit` / `offset`) — pinned by
+  `tests/contract/query-elements.test.mjs`, which drives the real bridge
+  handler with stubbed Blockbench globals. Live-Blockbench drive on an
+  owned instance is optional: a live `tools/call` against a real project
+  (e.g. bone regex + follow-up `measure`) was recorded `untested` at
+  ticket #24 (no Blockbench running on :8787 at verify time).
 - [ ] **Visual review (`screenshot_views`, owned-instance only)** — Reach:
   MCP `tools/call screenshot_views` against a Blockbench you started with
   an open project. Drive: call with default views, save returned PNGs to

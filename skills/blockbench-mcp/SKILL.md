@@ -59,6 +59,9 @@ Iterate at least 2-3 passes. The first pass is never good enough.
 ## Tool cheat-sheet
 
 - Discover/plan: `get_status`, `get_guide`, `list_outliner`, `get_element`, `list_formats`.
+- Find targets: `query_elements` — filtered, paged element lookup (`regex` on name,
+  `parent` group) returning `{name, uuid}` refs usable verbatim in edit/measure tools.
+  On large models prefer it over dumping the whole tree with `list_outliner`.
 - Project: `new_project` (pick the format first), `set_project_meta`, `save_project`,
   `load_project`, `close_project`, `export_project`.
 - Build: `add_groups`, `add_cubes`, `add_mesh` (crystals/cones/cylinders/wedges — mesh-capable

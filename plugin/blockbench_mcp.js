@@ -1922,6 +1922,68 @@ const commands = {
 		return el instanceof Group ? serializeGroup(el, true) : serializeElement(el);
 	},
 
+	// Filtered, paged element lookup (ticket #24): find edit/measure targets on
+	// large models without dumping the whole outliner. Filters apply first
+	// (regex on name, direct-parent group), then pagination slices the matches;
+	// `total` is always the pre-pagination match count so clients can page
+	// honestly. Refs are {name, uuid} usable verbatim as element refs in
+	// edit_element/edit_elements/delete_element(s)/measure. list_outliner stays
+	// untouched as the legacy full dump.
+	query_elements(p) {
+		requireProject();
+		// Universe: every outliner node (groups AND elements) in tree order.
+		const nodes = [];
+		if (Array.isArray(Outliner.root) && Outliner.root.length) {
+			(function walk(list) {
+				for (const n of list || []) {
+					if (!n) continue;
+					nodes.push(n);
+					if (typeof Group !== 'undefined' && n instanceof Group) walk(n.children);
+				}
+			})(Outliner.root);
+		} else {
+			// Fallback for runtimes without Outliner.root: flat union, no recursion
+			// (Group.all already contains nested groups).
+			for (const g of (typeof Group !== 'undefined' && Group.all ? Group.all : [])) nodes.push(g);
+			for (const e of (Outliner.elements || [])) nodes.push(e);
+		}
+		let matches = nodes;
+		if (p.regex != null) {
+			if (typeof p.regex !== 'string') throw new Error('Field "regex" must be a string.');
+			let re;
+			try {
+				re = new RegExp(p.regex, 'i');
+			} catch (e) {
+				throw new Error('Field "regex" is not a valid regular expression: ' + (e && e.message ? e.message : e));
+			}
+			matches = matches.filter((n) => re.test(n.name || ''));
+		}
+		if (p.parent != null) {
+			if (typeof p.parent !== 'string') throw new Error('Field "parent" must be a string.');
+			const g = findGroup(p.parent);
+			if (!g) throw new Error('Field "parent" not found: ' + p.parent);
+			// Identity match covers live Blockbench; the uuid fallback covers
+			// cross-realm/stub copies of the same group object.
+			matches = matches.filter((n) => n.parent === g || (n.parent && n.parent !== 'root' && n.parent.uuid === g.uuid));
+		}
+		const total = matches.length;
+		let offset = 0;
+		if (p.offset != null) {
+			offset = p.offset;
+			if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) throw new Error('Field "offset" must be a non-negative integer.');
+		}
+		let limit = Infinity;
+		if (p.limit != null) {
+			limit = p.limit;
+			if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) throw new Error('Field "limit" must be a positive integer.');
+		}
+		const refs = matches
+			.slice(offset)
+			.slice(0, limit)
+			.map((n) => ({ name: n.name, uuid: n.uuid }));
+		return { refs, total, offset };
+	},
+
 	// Measure verifiable dimensions in model units with named axes.
 	// Modes: element (one cube), group (group/bone including children),
 	// model (overall dims, no manual aggregation), distance (gap between two
