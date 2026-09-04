@@ -187,6 +187,18 @@ test("handler result: measure bridge errors name the offending field", async () 
   });
 });
 
+test("handler result: scope+elements forward to the bridge unchanged", async () => {
+  const packUv = tools.find((t) => t.name === "pack_uv");
+  assert.ok(packUv, "pack_uv must exist");
+  await withFakeBridge({}, async () => {
+    const blocks = await packUv.handler({ scope: "selected", elements: ["slide-a", "slide-b"] });
+    assert.equal(blocks[0].type, "text");
+    assert.deepEqual(JSON.parse(blocks[0].text), {
+      echo: { scope: "selected", elements: ["slide-a", "slide-b"] },
+    });
+  });
+});
+
 /**
  * Stub the bridge transport (global fetch) so handlers return canned
  * results without a live Blockbench. Restores the real fetch afterwards.
