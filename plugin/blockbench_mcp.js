@@ -1795,10 +1795,9 @@ const commands = {
 		if (mode === 'distance') {
 			const ra = measurableBox(p.a, 'a');
 			const rb = measurableBox(p.b, 'b');
-			const axes = ['x', 'y', 'z'];
 			const gap = {}, delta = {};
 			let sumSq = 0;
-			axes.forEach((ax) => {
+			AXES.forEach((ax) => {
 				const aMin = ra.box.min[ax], aMax = ra.box.max[ax];
 				const bMin = rb.box.min[ax], bMax = rb.box.max[ax];
 				const g = Math.max(0, Math.max(aMin, bMin) - Math.min(aMax, bMax));
