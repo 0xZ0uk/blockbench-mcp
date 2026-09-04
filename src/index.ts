@@ -16,49 +16,72 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { tools } from "./tools.js";
 import { BASE_URL } from "./client.js";
+import { pathToFileURL } from "node:url";
 
-const server = new Server(
-  { name: "blockbench-mcp", version: "0.1.0" },
-  { capabilities: { tools: {} } }
-);
+/**
+ * Build the MCP server with the production ListTools/CallTool wiring.
+ * Exported so the contract suite can exercise the exact handlers clients
+ * reach (via an in-memory transport with the bridge stubbed).
+ */
+export function createServer(): Server {
+  const server = new Server(
+    { name: "blockbench-mcp", version: "0.1.0" },
+    { capabilities: { tools: {} } }
+  );
 
-const toolMap = new Map(tools.map((t) => [t.name, t]));
+  const toolMap = new Map(tools.map((t) => [t.name, t]));
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema,
-  })),
-}));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    })),
+  }));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const tool = toolMap.get(request.params.name);
-  if (!tool) {
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }],
-    };
-  }
-  try {
-    const content = await tool.handler((request.params.arguments ?? {}) as Record<string, any>);
-    return { content };
-  } catch (err: any) {
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Error: ${err?.message ?? String(err)}` }],
-    };
-  }
-});
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const tool = toolMap.get(request.params.name);
+    if (!tool) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }],
+      };
+    }
+    try {
+      const content = await tool.handler((request.params.arguments ?? {}) as Record<string, any>);
+      return { content };
+    } catch (err: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error: ${err?.message ?? String(err)}` }],
+      };
+    }
+  });
+
+  return server;
+}
 
 async function main() {
+  const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Logs go to stderr so they never corrupt the stdio protocol on stdout.
   console.error(`BlockbenchMCP server ready. Bridging to Blockbench at ${BASE_URL}`);
 }
 
-main().catch((err) => {
-  console.error("Fatal error starting BlockbenchMCP server:", err);
-  process.exit(1);
-});
+const invokedAsCli =
+  process.argv[1] != null &&
+  (() => {
+    try {
+      return import.meta.url === pathToFileURL(process.argv[1]).href;
+    } catch {
+      return false;
+    }
+  })();
+
+if (invokedAsCli) {
+  main().catch((err) => {
+    console.error("Fatal error starting BlockbenchMCP server:", err);
+    process.exit(1);
+  });
+}
