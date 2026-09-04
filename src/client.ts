@@ -18,15 +18,22 @@ export interface CommandResponse {
 let requestCounter = 0;
 
 /**
- * Send a command to the Blockbench bridge. Resolves with the command's
- * `result`, or throws an Error carrying the message reported by Blockbench.
+ * Timeout signal for a single bridge attempt. Carries the exact public
+ * timeout message; `callBlockbench` retries on this class only, so
+ * bridge-reported errors and connection failures never retry.
  */
-export async function callBlockbench(
+class BridgeTimeoutError extends Error {}
+
+/**
+ * One POST attempt against the bridge. Throws BridgeTimeoutError on abort,
+ * a connection Error when unreachable, or the bridge-reported Error.
+ */
+async function attemptSend(
+  id: string,
   action: string,
-  params: Record<string, unknown> = {},
-  timeoutMs = 60_000
+  params: Record<string, unknown>,
+  timeoutMs: number
 ): Promise<unknown> {
-  const id = `req-${++requestCounter}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -39,9 +46,8 @@ export async function callBlockbench(
       signal: controller.signal,
     });
   } catch (err: any) {
-    clearTimeout(timer);
     if (err?.name === "AbortError") {
-      throw new Error(`Command "${action}" timed out after ${timeoutMs}ms.`);
+      throw new BridgeTimeoutError(`Command "${action}" timed out after ${timeoutMs}ms.`);
     }
     throw new Error(
       `Cannot reach Blockbench on ${BASE_URL}. Is Blockbench open with the ` +
@@ -56,6 +62,29 @@ export async function callBlockbench(
     throw new Error(data.error || `Command "${action}" failed.`);
   }
   return data.result;
+}
+
+/**
+ * Send a command to the Blockbench bridge. Resolves with the command's
+ * `result`, or throws an Error carrying the message reported by Blockbench.
+ *
+ * Retry policy (ticket #20): a timed-out attempt is re-sent exactly once
+ * with the identical request before giving up. Safe because bulk creation
+ * is idempotent (`dedupe_by_name`, ticket #19). Non-timeout failures —
+ * bridge-reported errors, unreachable bridge — are never retried.
+ */
+export async function callBlockbench(
+  action: string,
+  params: Record<string, unknown> = {},
+  timeoutMs = 60_000
+): Promise<unknown> {
+  const id = `req-${++requestCounter}`;
+  try {
+    return await attemptSend(id, action, params, timeoutMs);
+  } catch (err) {
+    if (!(err instanceof BridgeTimeoutError)) throw err;
+    return await attemptSend(id, action, params, timeoutMs);
+  }
 }
 
 /** Quick connectivity check. Returns bridge info or throws. */
