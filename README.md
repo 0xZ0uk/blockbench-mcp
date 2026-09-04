@@ -133,6 +133,28 @@ root; on Windows `cd` prints it too):
 }
 ```
 
+**OpenCode** — `opencode.json` in the repo root (already checked in; see
+[OpenCode MCP docs](https://opencode.ai/docs/mcp-servers/)):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "blockbench": {
+      "type": "local",
+      "command": ["node", "dist/index.js"],
+      "enabled": true,
+      "environment": { "BLOCKBENCH_MCP_PORT": "8787" }
+    }
+  }
+}
+```
+
+> The command runs from the workspace, so the relative `dist/index.js` path
+> resolves from a fresh clone. Under OpenCode the tools surface as
+> `blockbench_<tool>` (e.g. `blockbench_get_status`) instead of Claude's
+> `mcp__blockbench__<tool>` — see [AGENTS.md](AGENTS.md) for the mapping.
+
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `BLOCKBENCH_MCP_PORT` | `8787` | Must match the plugin's port setting. |
