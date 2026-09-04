@@ -201,6 +201,12 @@ add_keyframes {
 screenshot_views { "views": ["isometric_right_front", "front", "left", "back"] }
 check_model {}
 
+// Blueprint review: measurable ortho side/front/top with a px-per-unit
+// guarantee and optional wireframe (projection + view mode are restored
+// afterward, so shots are reproducible regardless of earlier camera calls)
+screenshot_views { "views": [{ "view": "front", "ortho": true, "px_per_unit": 8 },
+                             { "view": "top", "ortho": true, "px_per_unit": 8, "wireframe": true }] }
+
 // 8. Save / export
 save_project   { "path": "D:/models/bear.bbmodel" }
 export_project { "path": "D:/models/bear.geo.json" }

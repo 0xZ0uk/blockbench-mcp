@@ -12,7 +12,7 @@ never leave it to lie.
 - [ ] **Contract suite gate (`pnpm test`)** — Reach: repo root after
   `pnpm install`. Drive: `pnpm test`. Proved when: `tsc` build succeeds and
   `node --test tests/contract/*.test.mjs` reports fail 0 with all tests
-  passing (tallies grow as cases are added; currently 26 pass / 0 fail).
+  passing (tallies grow as cases are added; currently 29 pass / 0 fail).
 - [ ] **Bridge status (read-only, shared-safe)** — Reach:
   `curl -s http://127.0.0.1:8787/ping` plus `get_status` over the bridge.
   Drive: curl, or MCP `tools/call get_status` with an owned stdio server.
@@ -50,6 +50,11 @@ never leave it to lie.
 - [ ] **Visual review (`screenshot_views`, owned-instance only)** — Reach:
   MCP `tools/call screenshot_views` against a Blockbench you started with
   an open project. Drive: call with default views, save returned PNGs to
-  `.artifacts/<task>/`. Proved when: one PNG per requested view exists on
-  disk and each is a non-empty image. Untested without an owned instance —
+  `.artifacts/<task>/`. Blueprint variant: `{views:[{view:"front",
+  ortho:true, px_per_unit:8}], ortho:true, wireframe:false}` — per-view
+  `{view, ortho?, px_per_unit?, wireframe?}` overrides call-level flags.
+  Proved when: one PNG per requested view exists on
+  disk and each is a non-empty image; summary text ends
+  `(projection restored)` and each `View:` line names its blueprint flags.
+  Untested without an owned instance —
   record `untested + reason`, never silent.

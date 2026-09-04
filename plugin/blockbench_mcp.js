@@ -486,6 +486,118 @@ function applyAngleName(preview, name) {
 	if (preview.controls) preview.controls.target.set(center[0], center[1], center[2]);
 }
 
+/**
+ * Blueprint capture mechanics (ticket #7 service layer).
+ * Orthographic side/front/top shots with a pixels-per-unit guarantee and an
+ * optional wireframe overlay. Callers own which view to shoot; these helpers
+ * own only the pin/scale/overlay/restore mechanics so every shot behaves
+ * identically. Blockbench ortho frustum is CSS-pixel based (40 x zoom CSS
+ * px per unit) while the captured canvas renders at device resolution, so
+ * the zoom pin compensates for devicePixelRatio to hold the PNG-level
+ * guarantee on connected previews.
+ */
+const BLUEPRINT_PX_PER_UNIT_K = 40;
+
+/** Normalize one `views` item + call-level defaults into explicit blueprint params. */
+function normalizeBlueprintView(v, defaults) {
+	const d = defaults || {};
+	const bp = {
+		label: 'custom', presetName: null, position: null, target: null,
+		ortho: d.ortho, px_per_unit: d.px_per_unit, wireframe: d.wireframe,
+	};
+	const takeOverrides = (o) => {
+		if (!o || typeof o !== 'object') return;
+		if (typeof o.ortho === 'boolean') bp.ortho = o.ortho;
+		if (typeof o.px_per_unit === 'number') bp.px_per_unit = o.px_per_unit;
+		if (typeof o.wireframe === 'boolean') bp.wireframe = o.wireframe;
+	};
+	if (typeof v === 'string') {
+		bp.label = v;
+		bp.presetName = v;
+	} else if (v && typeof v === 'object' && !Array.isArray(v)) {
+		if (v.view !== undefined) {
+			// Per-view blueprint object: {view: string|{position,target}, ortho?, px_per_unit?, wireframe?}
+			takeOverrides(v);
+			const inner = v.view;
+			if (typeof inner === 'string') {
+				bp.label = inner;
+				bp.presetName = inner;
+			} else if (inner && typeof inner === 'object') {
+				if (Array.isArray(inner.position)) bp.position = inner.position;
+				if (Array.isArray(inner.target)) bp.target = inner.target;
+			}
+		} else {
+			// Legacy {position,target} object; call-level blueprint flags apply.
+			if (Array.isArray(v.position)) bp.position = v.position;
+			if (Array.isArray(v.target)) bp.target = v.target;
+		}
+	}
+	// px_per_unit is only meaningful in ortho: requesting a scale pins ortho
+	// unless the view explicitly opts out (then the scale is dropped, never
+	// faked onto a perspective shot).
+	if (typeof bp.px_per_unit === 'number' && bp.ortho === undefined) bp.ortho = true;
+	return bp;
+}
+
+/** Snapshot preview + view-mode state so a blueprint shot can restore it afterward. */
+function savePreviewState(preview) {
+	return {
+		ortho: !!(preview && preview.isOrtho),
+		angle: preview ? preview.angle : null,
+		zoom: preview && preview.camera ? preview.camera.zoom : null,
+		fov: (preview && preview.camPers && typeof preview.camPers.fov === 'number') ? preview.camPers.fov : null,
+		pos: preview && preview.camera ? preview.camera.position.clone() : null,
+		target: preview && preview.controls ? preview.controls.target.clone() : null,
+		viewMode: (typeof Project !== 'undefined' && Project) ? Project.view_mode : null,
+	};
+}
+
+/** Restore state saved by savePreviewState. Returns {projection_restored}. */
+function restorePreviewState(preview, state) {
+	try {
+		if (state.viewMode !== null && typeof Project !== 'undefined' && Project &&
+			Project.view_mode !== state.viewMode) {
+			Project.view_mode = state.viewMode;
+			if (typeof Canvas !== 'undefined' && Canvas && typeof Canvas.updateViewMode === 'function') Canvas.updateViewMode();
+		}
+		if (preview && typeof preview.setProjectionMode === 'function') preview.setProjectionMode(!!state.ortho);
+		if (preview && typeof preview.setLockedAngle === 'function' && state.angle !== undefined) {
+			try { preview.setLockedAngle(state.angle || undefined); } catch (e) { /* older builds */ }
+		}
+		if (preview && preview.camera && state.pos) preview.camera.position.copy(state.pos);
+		if (preview && preview.controls && state.target) preview.controls.target.set(state.target.x, state.target.y, state.target.z);
+		if (preview && preview.camera && typeof state.zoom === 'number') {
+			preview.camera.zoom = state.zoom;
+			if (typeof preview.camera.updateProjectionMatrix === 'function') preview.camera.updateProjectionMatrix();
+		}
+		if (!state.ortho && preview && typeof preview.setFOV === 'function' && typeof state.fov === 'number') {
+			try { preview.setFOV(state.fov); } catch (e) { /* ignore */ }
+		}
+		if (preview && typeof preview.render === 'function') preview.render();
+	} catch (e) { /* restore best-effort; report below */ }
+	const restored = preview && typeof preview.isOrtho === 'boolean' ? preview.isOrtho === !!state.ortho : true;
+	return { projection_restored: !!restored };
+}
+
+/** Pin projection/scale/overlay for one blueprint shot (after camera is placed). */
+function applyBlueprintSettings(preview, bp) {
+	if (bp.ortho && preview && typeof preview.setProjectionMode === 'function') preview.setProjectionMode(true);
+	// Scale guarantee holds only for ortho shots; never bend a perspective
+	// camera's zoom and report it as px-per-unit.
+	if (bp.ortho && typeof bp.px_per_unit === 'number' && preview && preview.camera) {
+		// Ortho frustum is CSS-pixel based but screenshotPreview returns the
+		// device-resolution canvas: divide out devicePixelRatio so the PNG
+		// carries px_per_unit device px per model unit at any display scaling.
+		const dpr = (typeof window !== 'undefined' && window && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+		preview.camera.zoom = bp.px_per_unit / (BLUEPRINT_PX_PER_UNIT_K * (dpr || 1));
+		if (typeof preview.camera.updateProjectionMatrix === 'function') preview.camera.updateProjectionMatrix();
+	}
+	if (bp.wireframe && typeof Project !== 'undefined' && Project) {
+		Project.view_mode = 'wireframe';
+		if (typeof Canvas !== 'undefined' && Canvas && typeof Canvas.updateViewMode === 'function') Canvas.updateViewMode();
+	}
+}
+
 /** Run a list of drawing operations against a 2D canvas context. */
 function applyPaintOps(ctx, ops) {
 	for (const op of ops) {
@@ -2355,40 +2467,86 @@ const commands = {
 	// Capture several camera angles in one call so you can see the whole model
 	// at once and spot problems (gaps, wrong rotations, missing detail) from
 	// every side. `views` is a list of preset ids ('front','back','left',
-	// 'right','top','bottom','isometric_right_front',...) or {position,target}.
+	// 'right','top','bottom','isometric_right_front',...), {position,target},
+	// or blueprint objects {view, ortho?, px_per_unit?, wireframe?}.
+	// Call-level `ortho`/`px_per_unit`/`wireframe` apply to every shot unless
+	// a per-view object overrides them. Camera semantics are unchanged —
+	// blueprint mode only pins projection, scale, and overlay for the shot
+	// and restores the prior preview state afterward.
 	screenshot_views(p) {
 		requireProject();
 		const preview = Preview.selected;
 		const views = (p && Array.isArray(p.views) && p.views.length)
 			? p.views
 			: ['isometric_right_front', 'front', 'left', 'back'];
+		const defaults = {
+			ortho: p && typeof p.ortho === 'boolean' ? p.ortho : undefined,
+			px_per_unit: p && typeof p.px_per_unit === 'number' ? p.px_per_unit : undefined,
+			wireframe: p && typeof p.wireframe === 'boolean' ? p.wireframe : undefined,
+		};
+		if (defaults.px_per_unit !== undefined && !(defaults.px_per_unit > 0)) {
+			throw new Error('Field "px_per_unit" must be a positive number.');
+		}
 		const options = {};
 		if (p && p.width) options.width = p.width;
 		if (p && p.height) options.height = p.height;
 		const shotOne = () => new Promise((res) =>
 			Screencam.screenshotPreview(preview, options, (d) => res(d)));
-		return (async () => {
-			const shots = [];
-			for (const v of views) {
-				if (typeof v === 'string') {
-					const preset = (typeof DefaultCameraPresets !== 'undefined' && DefaultCameraPresets)
-						? DefaultCameraPresets.find((x) => x.id === v || x.name === v) : null;
-					if (preset && preview.loadAnglePreset) preview.loadAnglePreset(preset);
-					else applyAngleName(preview, v);
-				} else if (v && typeof v === 'object') {
-					if (Array.isArray(v.position)) preview.camera.position.set(v.position[0], v.position[1], v.position[2]);
-					if (Array.isArray(v.target) && preview.controls) preview.controls.target.set(v.target[0], v.target[1], v.target[2]);
-				}
-				if (preview.controls && preview.controls.updateSceneScale) preview.controls.updateSceneScale();
-				preview.render();
-				const dataUrl = await shotOne();
-				shots.push({
-					view: typeof v === 'string' ? v : 'custom',
-					data_url: dataUrl,
-					base64: dataUrl.replace(/^data:image\/png;base64,/, ''),
-				});
+		const placeCamera = (bp) => {
+			if (bp.position || bp.target) {
+				if (Array.isArray(bp.position)) preview.camera.position.set(bp.position[0], bp.position[1], bp.position[2]);
+				if (Array.isArray(bp.target) && preview.controls) preview.controls.target.set(bp.target[0], bp.target[1], bp.target[2]);
+			} else if (bp.presetName) {
+				const preset = (typeof DefaultCameraPresets !== 'undefined' && DefaultCameraPresets)
+					? DefaultCameraPresets.find((x) => x.id === bp.presetName || x.name === bp.presetName) : null;
+				if (preset && preview.loadAnglePreset) preview.loadAnglePreset(preset);
+				else applyAngleName(preview, bp.presetName);
 			}
-			return { count: shots.length, shots };
+		};
+		return (async () => {
+			const entryState = savePreviewState(preview);
+			const shots = [];
+			try {
+				for (const v of views) {
+					const bp = normalizeBlueprintView(v, defaults);
+					if (bp.px_per_unit !== undefined && !(bp.px_per_unit > 0)) {
+						throw new Error('Field "px_per_unit" must be a positive number.');
+					}
+					const saved = savePreviewState(preview);
+					try {
+						placeCamera(bp);
+						if (preview.controls && preview.controls.updateSceneScale) preview.controls.updateSceneScale();
+						applyBlueprintSettings(preview, bp);
+						preview.render();
+						const dataUrl = await shotOne();
+						// Report applied state, not just requested flags, so a
+						// build missing the projection/wireframe APIs cannot
+						// silently claim a guarantee it did not deliver.
+						const heldOrtho = (preview && typeof preview.isOrtho === 'boolean') ? preview.isOrtho : !!bp.ortho;
+						const heldWire = (typeof Project !== 'undefined' && Project)
+							? Project.view_mode === 'wireframe' : !!bp.wireframe;
+						const shotOrtho = !!bp.ortho && heldOrtho;
+						const shotWire = !!bp.wireframe && heldWire;
+						const { projection_restored } = restorePreviewState(preview, saved);
+						shots.push({
+							view: bp.label,
+							data_url: dataUrl,
+							base64: dataUrl.replace(/^data:image\/png;base64,/, ''),
+							ortho: shotOrtho,
+							px_per_unit: shotOrtho && typeof bp.px_per_unit === 'number' ? bp.px_per_unit : null,
+							wireframe: shotWire,
+							projection_restored,
+						});
+					} catch (err) {
+						restorePreviewState(preview, saved);
+						throw err;
+					}
+				}
+			} finally {
+				restorePreviewState(preview, entryState);
+			}
+			const allRestored = shots.every((s) => s.projection_restored);
+			return { count: shots.length, shots, projection_restored: allRestored };
 		})();
 	},
 
