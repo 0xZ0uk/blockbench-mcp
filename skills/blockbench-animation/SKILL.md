@@ -23,7 +23,8 @@ A bone's **`+X` rotation tilts its FRONT (`-Z` side) UP** (and the back down). C
   rest rotation already tilts the head up, so a "head-down" pose needs a clearly negative delta.
 - Legs swing on `X` to move along `Z` (the walking axis, for -Z-facing models).
 - Phase relationships matter more than absolute signs for a looping cycle — but VERIFY head/neck
-  poses visually (preview a keyframe and screenshot) every time.
+  poses with `preview_pose` + `compare_views` (preview a keyframe, compare against the pinned
+  stance reference) every time.
 
 ## Keyframes
 
@@ -68,9 +69,12 @@ Bones: `body`, `head`, `arm_left/right`, `leg_left/right`, decorative bones.
 - **Cast (channel)**: raise both arms forward/up, tilt head up slightly, hold; pulse any glow
   with a `scale` keyframe on the `*_core` bones if separated.
 
-## Previewing poses
+## Previewing poses (reference-compare)
 
-Call the `preview_pose` tool, then `screenshot_views`.
+`preview_pose` is the ONLY pose-preview path — no raw-JS preview recipe remains. The retired
+`execute_script` body is intentionally not kept in
+`skills/blockbench-animation/references/animation-scripts.md`. One seam: the tool is the
+recipe now.
 
 ```jsonc
 preview_pose {
@@ -79,16 +83,27 @@ preview_pose {
 }
 ```
 
-Confirm the pose reads correctly — especially head/neck signs — before exporting.
-(The retired `execute_script` body this replaces is intentionally not kept here.
-One seam: the tool is the recipe now.)
+Review each checked pose against the pinned stance reference — drift arrives as delta text
+to address, not a screenshot to rationalize:
+
+1. Pin the stance reference with `set_reference_image` under the view you will compare (the
+   reference's exact angle; front/side for limb reads).
+2. Call `preview_pose` at the keyframe time, then `screenshot_views` for the visual read.
+3. Run `compare_views` with the same camera + `px_per_unit` + width/height. Address every
+   differ — especially head/neck signs — before exporting.
+4. Reset to rest (Save/export reminders) before saving, so the file shows the rest pose.
 
 ## Save/export reminders
 
-- Before saving, reset to rest: `Modes.options.edit.select(); Timeline.setTime(0);` so the saved
-  file shows the rest pose, not a mid-animation frame.
+- Before saving, reset to rest via the snippet in
+  `skills/blockbench-animation/references/animation-scripts.md` §3 (no native reset tool
+  exists; `preview_pose` leaves the preview active) so the saved file shows the rest pose,
+  not a mid-animation frame.
 - Export the model via `export_project` (the project format's codec). Animation JSON
-  exports via the `execute_script` snippet in `references/animation-scripts.md`;
+  exports via the `execute_script` snippet in
+  `skills/blockbench-animation/references/animation-scripts.md` §4 (no native
+  animation-JSON tool; genuinely uncovered);
   texture PNGs export via the `export_textures` tool.
 - Animation channels are rotation/position/scale per bone; `list_animations` to inventory before
-  exporting.
+  exporting. Keyframe tables are planned with `add_keyframes` directly — the table-generator
+  notes live in `skills/blockbench-animation/references/animation-scripts.md` §2.
