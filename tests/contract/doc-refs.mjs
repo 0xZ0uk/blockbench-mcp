@@ -158,6 +158,15 @@ export const TOOL_WORD_ALLOWLIST = new Set(
     "palette",
     "flat",
     "smooth",
+    "gap_slit",
+    "see_through_opening",
+    "unique_total",
+    "sweep",
+    "handguard_wood",
+    "grip_wood",
+    "stock_wood",
+    "receiver_steel",
+    "barrel_steel",
   ].sort()
 );
 
