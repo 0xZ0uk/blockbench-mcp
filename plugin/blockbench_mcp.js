@@ -435,6 +435,9 @@ const GATE_SEVERITY = Object.assign(Object.create(null), {
 	zero_uv: 'error',
 	uv_out_of_bounds: 'error',
 	coplanar_overlap: 'error',
+	gap_slit: 'error',
+	see_through_opening: 'warning',
+	floating_piece: 'warning',
 	no_texture: 'warning',
 	no_bone_parent: 'warning',
 });
@@ -484,6 +487,280 @@ function clearanceOverlaps() {
 		}
 	}
 	return out;
+}
+
+/**
+ * Space audit — the see-through-gap detector (screenshot review in data).
+ *
+ * Motivation: edge-to-edge cube chains (handguards, magazine segments,
+ * guard loops) routinely leave 1px-wide slits you can see the background
+ * through, and buttplates/caps stop short of the surface they should cover.
+ * None of that trips coplanar_overlap — the cubes never share a plane —
+ * so it used to surface only as a human "there is a hole in your model".
+ * This audit makes the same finding machine-readable.
+ *
+ * Method: project unrotated cubes onto a unit grid in each of the three
+ * view axes, flood the region OUTSIDE the model's footprint, then classify
+ * each remaining empty cell: touching the projection border = detached (a
+ * piece floating off the main mass); fully surrounded = enclosed hole
+ * (daylight visible through the model in that projection). A hole in ONE
+ * projection can still be legitimately open in 3D (a picture frame reads
+ * as an enclosed hole from the front and as an annulus from the side) — so
+ * enclosed_hole requires the gap to persist in ALL THREE projections;
+ * single/two-projection voids are legal 3D openings, not defects.
+ */
+const AUDIT_GRID_MAX = 160;          // cap cells per axis before scaling down
+const AUDIT_MIN_AREA_UNITS = 0.25;   // ignore sub-quarter-unit gaps (precision overlaps)
+const AUDIT_MIN_CELLS = 1;           // report any enclosed hole of >= this many cells
+const AUDIT_SLIT_FRAC = 0.02;        // crack-thin: min dim <= 2% of longest span
+const AUDIT_SLIT_ASPECT = 3;         // ...and aspect (long/short) >= 3
+const AUDIT_MAX_REPORT = 40;         // cap per kind so the issue list stays readable
+
+function auditProjectFootprint(cubes, axis) {
+	// Project onto the plane spanned by the two axes that are NOT `axis`.
+	const a = (axis + 1) % 3, b = (axis + 2) % 3;
+	let lo0 = Infinity, hi0 = -Infinity, lo1 = Infinity, hi1 = -Infinity;
+	for (const c of cubes) {
+		if (c.from[a] < lo0) lo0 = c.from[a];
+		if (c.to[a] > hi0) hi0 = c.to[a];
+		if (c.from[b] < lo1) lo1 = c.from[b];
+		if (c.to[b] > hi1) hi1 = c.to[b];
+	}
+	// Degenerate extent on either spanned axis -> nothing to audit.
+	if (!(hi0 > lo0) || !(hi1 > lo1)) return null;
+	const w0 = hi0 - lo0, w1 = hi1 - lo1;
+	// Unit grid, scaled down (never up) when the model exceeds AUDIT_GRID_MAX.
+	const scale = Math.max(1, Math.ceil(Math.max(w0, w1) / AUDIT_GRID_MAX));
+	const nx = Math.min(AUDIT_GRID_MAX, Math.ceil(w0 / scale) + 1);
+	const ny = Math.min(AUDIT_GRID_MAX, Math.ceil(w1 / scale) + 1);
+	const cell = (v, lo) => Math.min(nx - 1, Math.max(0, Math.floor((v - lo) / scale)));
+	const solid = new Uint8Array(nx * ny);
+	for (const c of cubes) {
+		const x0 = cell(c.from[a], lo0), x1 = cell(c.to[a] - 1e-6, lo0);
+		const y0 = cell(c.from[b], lo1), y1 = cell(c.to[b] - 1e-6, lo1);
+		for (let y = y0; y <= y1; y++) {
+			const row = y * nx;
+			for (let x = x0; x <= x1; x++) solid[row + x] = 1;
+		}
+	}
+	return { nx, ny, scale, solid, lo0, lo1, area: w0 * w1 };
+}
+
+function floodOutside(solid, nx, ny) {
+	const outside = new Uint8Array(nx * ny);
+	const stack = [];
+	for (let x = 0; x < nx; x++) {
+		if (!solid[x]) { outside[x] = 1; stack.push(x); }
+		const i2 = (ny - 1) * nx + x;
+		if (!solid[i2]) { outside[i2] = 1; stack.push(i2); }
+	}
+	for (let y = 0; y < ny; y++) {
+		const i1 = y * nx;
+		if (!solid[i1]) { outside[i1] = 1; stack.push(i1); }
+		const i2 = i1 + nx - 1;
+		if (!solid[i2]) { outside[i2] = 1; stack.push(i2); }
+	}
+	while (stack.length) {
+		const i = stack.pop();
+		const x = i % nx, y = (i / nx) | 0;
+		if (x > 0 && !outside[i - 1] && !solid[i - 1]) { outside[i - 1] = 1; stack.push(i - 1); }
+		if (x < nx - 1 && !outside[i + 1] && !solid[i + 1]) { outside[i + 1] = 1; stack.push(i + 1); }
+		if (y > 0 && !outside[i - nx] && !solid[i - nx]) { outside[i - nx] = 1; stack.push(i - nx); }
+		if (y < ny - 1 && !outside[i + nx] && !solid[i + nx]) { outside[i + nx] = 1; stack.push(i + nx); }
+	}
+	return outside;
+}
+
+/** Connected components of empty, non-outside cells (4-connectivity). */
+function emptyRegions(solid, outside, nx, ny) {
+	const seen = new Uint8Array(nx * ny);
+	const out = [];
+	for (let start = 0; start < nx * ny; start++) {
+		if (solid[start] || outside[start] || seen[start]) continue;
+		let area = 0, minx = nx, maxx = -1, miny = ny, maxy = -1, touchesBorder = false;
+		const stack = [start];
+		seen[start] = 1;
+		while (stack.length) {
+			const i = stack.pop();
+			const x = i % nx, y = (i / nx) | 0;
+			area++;
+			if (x < minx) minx = x;
+			if (x > maxx) maxx = x;
+			if (y < miny) miny = y;
+			if (y > maxy) maxy = y;
+			if (x === 0 || y === 0 || x === nx - 1 || y === ny - 1) touchesBorder = true;
+			if (x > 0 && !solid[i - 1] && !outside[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; stack.push(i - 1); }
+			if (x < nx - 1 && !solid[i + 1] && !outside[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; stack.push(i + 1); }
+			if (y > 0 && !solid[i - nx] && !outside[i - nx] && !seen[i - nx]) { seen[i - nx] = 1; stack.push(i - nx); }
+			if (y < ny - 1 && !solid[i + nx] && !outside[i + nx] && !seen[i + nx]) { seen[i + nx] = 1; stack.push(i + nx); }
+		}
+		out.push({ area, minx, maxx, miny, maxy, touchesBorder });
+	}
+	return out;
+}
+
+/** Connected components of OCCUPIED cells (4-connectivity), same shape as
+ * emptyRegions — used to detect pieces disconnected from the main mass. */
+function solidIslands(solid, nx, ny) {
+	const seen = new Uint8Array(nx * ny);
+	const out = [];
+	for (let start = 0; start < nx * ny; start++) {
+		if (!solid[start] || seen[start]) continue;
+		let area = 0, minx = nx, maxx = -1, miny = ny, maxy = -1;
+		const stack = [start];
+		seen[start] = 1;
+		while (stack.length) {
+			const i = stack.pop();
+			const x = i % nx, y = (i / nx) | 0;
+			area++;
+			if (x < minx) minx = x;
+			if (x > maxx) maxx = x;
+			if (y < miny) miny = y;
+			if (y > maxy) maxy = y;
+			if (x > 0 && solid[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; stack.push(i - 1); }
+			if (x < nx - 1 && solid[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; stack.push(i + 1); }
+			if (y > 0 && solid[i - nx] && !seen[i - nx]) { seen[i - nx] = 1; stack.push(i - nx); }
+			if (y < ny - 1 && solid[i + nx] && !seen[i + nx]) { seen[i + nx] = 1; stack.push(i + nx); }
+		}
+		out.push({ area, minx, maxx, miny, maxy });
+	}
+	return out;
+}
+
+/**
+ * The full space audit. Returns { slits, openings, detached } in model units.
+ *
+ * Union-projection semantics: a void cell in a projection means NO cube
+ * occupies that sightline — i.e. you can see background through the model
+ * along that axis. A void fully sealed in 3D (interior cavity) is hidden
+ * behind its own shell in EVERY projection and correctly stays silent.
+ * Classes:
+ * - slits: crack-thin voids enclosed in >=1 projection — the edge-to-edge
+ *   junction class (handguard meets barrel, buttplate short of the stock).
+ *   Thinness = dim_min <= max(1 unit, 0.5% of the longest projection span),
+ *   so a hairline means the same on a pistol as on a building. Gate ERROR.
+ * - openings: see-through voids that are NOT crack-thin (windows, ports,
+ *   guard loops) — legal design OR a missing face; gate WARNING with a
+ *   verify-against-reference hint. Voids open to the outside (notches,
+ *   C-shapes, gaps between separate masses) are NOT see-through and are
+ *   never reported.
+ * - detached: pieces disconnected from the main mass in 3D (cube-graph
+ *   connectivity: two cubes connect iff no axis positively separates their
+ *   boxes — touching counts, any real gap splits). Gate WARNING.
+ */
+function auditSpaceGaps(cubeList, opts) {
+	const o = opts || {};
+	const minCells = o.min_cells != null ? Number(o.min_cells) : AUDIT_MIN_CELLS;
+	const slitFrac = o.slit_frac != null ? Number(o.slit_frac) : AUDIT_SLIT_FRAC;
+	const perAxis = [];
+	let maxSpan = 0;
+	for (let axis = 0; axis < 3; axis++) {
+		const proj = auditProjectFootprint(cubeList, axis);
+		if (!proj) continue;
+		const spanX = proj.nx * proj.scale, spanY = proj.ny * proj.scale;
+		if (spanX > maxSpan) maxSpan = spanX;
+		if (spanY > maxSpan) maxSpan = spanY;
+		const outside = floodOutside(proj.solid, proj.nx, proj.ny);
+		const voids = emptyRegions(proj.solid, outside, proj.nx, proj.ny)
+			.filter((r) => r.area >= minCells)
+			.map((r) => {
+				const s = proj.scale;
+				const c0 = proj.lo0 + r.minx * s, c1 = proj.lo0 + (r.maxx + 1) * s;
+				const d0 = proj.lo1 + r.miny * s, d1 = proj.lo1 + (r.maxy + 1) * s;
+				const wU = Math.abs(c1 - c0), hU = Math.abs(d1 - d0);
+				return {
+					axis: AXES[axis],
+					area_units: Math.round(r.area * s * s * 100) / 100,
+					dim_min: Math.round(Math.min(wU, hU) * 100) / 100,
+					dim_max: Math.round(Math.max(wU, hU) * 100) / 100,
+					rect: {
+						min: [r4(Math.min(c0, c1)), r4(Math.min(d0, d1))],
+						max: [r4(Math.max(c0, c1)), r4(Math.max(d0, d1))],
+					},
+				};
+			});
+		perAxis.push({ axis: AXES[axis], voids });
+	}
+	// Crack-thin threshold scales with the model's longest projection span
+	// (floor 1 unit — anything a unit wide can read as a hairline crack).
+	const slitMaxDim = o.slit_max_dim != null
+		? Number(o.slit_max_dim)
+		: Math.max(1, slitFrac * maxSpan);
+	const minArea = Math.max(AUDIT_MIN_AREA_UNITS, maxSpan * maxSpan * 0.0001);
+	const slits = [];
+	const openings = [];
+	const seenKeys = new Set();
+	for (const pa of perAxis) {
+		for (const r of pa.voids) {
+			if (r.area_units < minArea) continue;
+			const k = pa.axis + ':' + r.rect.min.join(',') + '|' + r.rect.max.join(',');
+			if (seenKeys.has(k)) continue;
+			seenKeys.add(k);
+			if (r.dim_min <= slitMaxDim) {
+				slits.push({
+					axis: pa.axis, at: r.rect, area_units: r.area_units,
+					dim_min: r.dim_min, dim_max: r.dim_max,
+					hint: 'crack-thin see-through gap enclosed in the ' + pa.axis + ' projection — parts meet edge-to-edge instead of overlapping',
+				});
+			} else {
+				openings.push({
+					axis: pa.axis, at: r.rect, area_units: r.area_units,
+					dim_min: r.dim_min, dim_max: r.dim_max,
+				});
+			}
+		}
+	}
+	// Floating pieces: O(n^2) cube-graph connectivity. Two cubes connect when
+	// NO axis positively separates their boxes (touching = connected; any real
+	// gap on any axis = separate). Degenerate (zero-extent) cubes have no
+	// volume — they are already reported by degenerate_size and excluded.
+	const solid = cubeList.filter((c) =>
+		c.to[0] - c.from[0] > 1e-9 && c.to[1] - c.from[1] > 1e-9 && c.to[2] - c.from[2] > 1e-9);
+	const n = solid.length;
+	const parent = new Int32Array(n).map((_, i) => i);
+	const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+	const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
+	const axisGap = (a, b, ax) => Math.max(a.from[ax] - b.to[ax], b.from[ax] - a.to[ax]);
+	for (let i = 0; i < n; i++) {
+		for (let j = i + 1; j < n; j++) {
+			if (axisGap(solid[i], solid[j], 0) <= 1e-6 &&
+				axisGap(solid[i], solid[j], 1) <= 1e-6 &&
+				axisGap(solid[i], solid[j], 2) <= 1e-6) union(i, j);
+		}
+	}
+	const compSize = new Map();
+	for (let i = 0; i < n; i++) {
+		const r = find(i);
+		compSize.set(r, (compSize.get(r) || 0) + 1);
+	}
+	let primary = -1, primarySize = 0;
+	compSize.forEach((sz, r) => { if (sz > primarySize) { primarySize = sz; primary = r; } });
+	const detached = [];
+	if (compSize.size > 1) {
+		const seenRoots = new Set();
+		for (let i = 0; i < n; i++) {
+			const r = find(i);
+			if (r === primary || seenRoots.has(r)) continue;
+			seenRoots.add(r);
+			let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+			for (let j = 0; j < n; j++) {
+				if (find(j) !== r) continue;
+				for (let ax = 0; ax < 3; ax++) {
+					if (solid[j].from[ax] < min[ax]) min[ax] = solid[j].from[ax];
+					if (solid[j].to[ax] > max[ax]) max[ax] = solid[j].to[ax];
+				}
+			}
+			detached.push({
+				at: { min: min.map(r4), max: max.map(r4) },
+				cubes: solid.filter((c, j) => find(j) === r).map((c) => c.name).slice(0, 6),
+			});
+		}
+	}
+	return {
+		slits: slits.slice(0, AUDIT_MAX_REPORT),
+		openings: openings.slice(0, AUDIT_MAX_REPORT),
+		detached: detached.slice(0, AUDIT_MAX_REPORT),
+	};
 }
 
 /**
@@ -1299,7 +1576,7 @@ function buildVfxCanvas(w, h, frames, style, palette, seed, softEdge) {
 // box and faces as arrays of vertex indices (3 or 4 per face).
 // ---------------------------------------------------------------------------
 
-function meshPrimitive(shape, w, h, d, segments) {
+function meshPrimitive(shape, w, h, d, segments, sweepDeg) {
 	const n = Math.max(3, segments || 8);
 	const verts = [];
 	const faces = [];
@@ -1365,8 +1642,53 @@ function meshPrimitive(shape, w, h, d, segments) {
 			}
 			break;
 		}
+		case 'arc': case 'sweep': case 'banana': case 'tube': {
+			// Swept rectangle along a circular arc in the XZ plane — curved long
+			// parts (banana magazines, curved swords, serpentine tubes, ram horns)
+			// as ONE mesh instead of N edge-to-edge cubes (edge-to-edge segment
+			// chains leave see-through slits; check_model's enclosed_hole catches
+			// the leftover kind). Cross-section spans y=0..h and z=0..d, centred
+			// on x; the sweep runs about the model origin. `segments` = arc
+			// segments (default 8). Sweep direction: default +x start, positive
+			// sweep turns towards +z; give a negative sweep (or rotate the mesh)
+			// for the mirrored bend.
+			const sweep = (sweepDeg == null ? 60 : Number(sweepDeg));
+			const nseg = Math.max(1, n);
+			const r = cx;                                   // sweep radius = half width
+			const tube = Math.max(0.001, d / 2);            // half thickness (z span)
+			const a0 = 0;                                   // start at +x
+			const da = (sweep * Math.PI * 2) / 360 / nseg;
+			const centerAt = (i) => [Math.cos(a0 + da * i) * r, Math.sin(a0 + da * i) * r];
+			const ringAt = (i) => {
+				const [px, py] = centerAt(i);
+				const tx = -Math.sin(a0 + da * i), ty = Math.cos(a0 + da * i); // tangent
+				const nx = -ty, nz = tx;                    // in-plane normal (xz plane: y here is z)
+				return [
+					V(px + nx * tube, 0, py + nz * tube),
+					V(px - nx * tube, 0, py - nz * tube),
+					V(px - nx * tube, h, py - nz * tube),
+					V(px + nx * tube, h, py + nz * tube),
+				];
+			};
+			const rings = [];
+			for (let i = 0; i <= nseg; i++) rings.push(ringAt(i));
+			const N = rings.length;
+			// tube sides
+			for (let i = 0; i < N - 1; i++) {
+				const A = rings[i], B = rings[i + 1];
+				faces.push([A[0], A[1], B[1], B[0]]);       // underside
+				faces.push([A[3], B[3], B[2], A[2]]);       // topside
+				faces.push([A[1], A[2], B[2], B[1]]);       // inner wall
+				faces.push([A[0], B[0], B[3], A[3]]);       // outer wall
+			}
+			// flat end caps
+			const c0 = rings[0], cN = rings[N - 1];
+			faces.push([c0[0], c0[1], c0[2], c0[3]]);
+			faces.push([cN[3], cN[2], cN[1], cN[0]]);
+			break;
+		}
 		default:
-			throw new Error('Unknown mesh shape: ' + shape + ' (plane|pyramid|wedge|prism|crystal|shard|cone|cylinder)');
+			throw new Error('Unknown mesh shape: ' + shape + ' (plane|pyramid|wedge|prism|crystal|shard|cone|cylinder|arc)');
 	}
 	return { verts, faces };
 }
@@ -1449,6 +1771,21 @@ const MODELING_GUIDE = [
 	'   - Two billboard PLANES must never share the exact same position — offset by >=0.1.',
 	'   - check_model reports `coplanar_overlap` pairs; fix every one by nudging a cube.',
 	'',
+	'3c. NO SEE-THROUGH GAPS. Adjacent parts must OVERLAP, never just touch. The classic',
+	'   killers: handguard/fore-end meeting the barrel line edge-to-edge, a buttplate',
+	'   short of the surface it caps, segmented curves (magazines, horns, tubes) built',
+	'   as N cubes that meet at their edges, guard loops 1px thin. Rules:',
+	'   - Segments of a curved long part: overlap each junction by >=0.5 units, or build',
+	'     the whole part as ONE mesh — add_mesh {shape:"arc"} sweeps a rectangular',
+	'     cross-section along a curve (banana magazines, curved swords, serpentine',
+	'     tubes, horns) with `segments` for arc smoothness and negative sweep to mirror',
+	'     the bend. One mesh > a chain of touching cubes.',
+	'   - Caps and plates (buttplates, mag bases, iron sights) must extend past the',
+	'     surface they cap on every side, not stop short of it.',
+	'   - check_model reports `enclosed_hole` (background visible THROUGH the model —',
+	'     gate error) and `detached_mass` (large empty region beside the main mass —',
+	'     verify floating piece vs a legal opening like a trigger-guard window).',
+	'',
 	'4. SYMMETRY. Build one side, then mirror_element {axis:"x"} (or emit the mirror in',
 	'   the same add_cubes call: negate X of from/to, swap so from<to, negate Y/Z',
 	'   rotation signs). Keep paired bones named *_left / *_right.',
@@ -1504,7 +1841,20 @@ const TEXTURING_GUIDE = [
 	'',
 	'5. INSPECT. get_texture shows the sheet; screenshot_views shows it on the model.',
 	'   Compare to the reference palette. Recolour with detail_cubes `colors` and repeat.',
-].join('\n');
+	'',
+	'6. PIXEL-ART LOOK (flat quantized colour bands, no gradients) — smooth_bake',
+	'   {style:"pixel"}: bakes flat brightness bands per face (bands: 1-4, default 3)',
+	'   between the top-light and bottom-dark extremes, checkerboard-dithers band',
+	'   boundaries, and SKIPS the mottle + blur that would smear the pixel grid. Use',
+	'   bands:1 for pure flat fills; hard parts (*_cap/_base) skip the dither. Paint',
+	'   features with paint_faces after, same as the smooth look.',
+	'',
+	'7. AUDIT THE PALETTE — audit_texture counts the SOURCE bitmap\'s unique colours',
+	'   overall and per UV island (plus `quantized_unique`, a 16-level bucket count).',
+	'   A clean sheet has few; a gradient/filter-smeared one has dozens of one-off',
+	'   shades per face. Numbers, not vibes — if an island shows more colours than',
+	'   your palette allows, re-bake it flat instead of eyeballing the screenshot.',
+	].join('\n');
 
 const VFX_GUIDE = [
 	'BLOCKBENCH PIXEL-VFX PLAYBOOK — flames, energy, projectiles, slashes, trails, auras.',
@@ -2520,7 +2870,7 @@ const commands = {
 	// uv_out_of_bounds + coplanar_overlap, warnings = no_texture +
 	// no_bone_parent, gate_pass true iff errors == 0. `issues`/`by_type`/
 	// `issue_count` are unchanged; `gate` is purely additive.
-	check_model() {
+	check_model(p) {
 		requireProject();
 		const tw = Project.texture_width, th = Project.texture_height;
 		const animMode = !!(Format && Format.animation_mode);
@@ -2608,6 +2958,45 @@ const commands = {
 			}
 			issues.push(issue);
 		});
+
+		// SPACE AUDIT — see-through gaps and floating pieces (screenshot review
+		// in data). Classes:
+		// - gap_slit: crack-thin see-through void (parts meeting edge-to-edge
+		//   instead of overlapping — handguards, buttplates, segmented curves)
+		//   -> gate ERROR.
+		// - see_through_opening: larger see-through void (window, port, guard
+		//   loop) — legal design OR a missing face -> gate WARNING, verify
+		//   against the reference.
+		// - floating_piece: piece disconnected from the main mass in 3D
+		//   -> gate WARNING (verify before deleting).
+		// Unrotated, non-degenerate cubes only — rotated cubes expand their
+		// bounding box in projection (hides slits, invents fake ones) and
+		// zero-extent cubes have no volume (already flagged degenerate_size).
+		const spaceOpts = (p && p.audit_space) || null;
+		if (!spaceOpts || spaceOpts.enabled !== false) {
+			const gaps = auditSpaceGaps(Cube.all.filter(isUnrotatedCube), spaceOpts || {});
+			gaps.slits.forEach((s) => {
+				issues.push({
+					issue: 'gap_slit',
+					at: s.at, axis: s.axis, area_units: s.area_units, dim_min: s.dim_min, dim_max: s.dim_max,
+					hint: s.hint + '; extend a neighbouring cube >=0.5 units into the gap or switch the part to add_mesh shape:arc',
+				});
+			});
+			gaps.openings.forEach((o) => {
+				issues.push({
+					issue: 'see_through_opening',
+					at: o.at, axis: o.axis, area_units: o.area_units, dim_min: o.dim_min, dim_max: o.dim_max,
+					hint: 'see-through opening (background visible along the ' + o.axis + ' axis) — verify against the reference: designed window/port or a missing face',
+				});
+			});
+			gaps.detached.forEach((d) => {
+				issues.push({
+					issue: 'floating_piece',
+					at: d.at, cubes: d.cubes,
+					hint: 'piece disconnected from the main mass (no cube contact on any axis) — verify against the reference (orphan or intentional sub-assembly?)',
+				});
+			});
+		}
 
 		const byType = {};
 		issues.forEach((i) => { byType[i.issue] = (byType[i.issue] || 0) + 1; });
@@ -2775,6 +3164,100 @@ const commands = {
 		};
 	},
 
+	// PALETTE AUDIT — the mush detector. Pixel-art and quantized looks die by
+	// gradients: a soft bake or a filtered export smears every face into dozens
+	// of one-off shades, and the human reviewer sees "muddy colours" while the
+	// data was invisible. This reads the SOURCE bitmap (not a screenshot, not
+	// the viewport) and counts actual unique colours — overall and per UV
+	// island (box-UV cubes assigned to this texture). `quantized_unique`
+	// buckets colours to 16-level steps: a sheet with few real colours shows a
+	// similar bucket count, while a gradient-smeared one explodes — the
+	// ratio is the mush signal. Numbers only; no pixels are changed.
+	audit_texture(p) {
+		requireProject();
+		let tex = p.texture ? findTexture(p.texture) : (Texture.getDefault ? Texture.getDefault() : null);
+		if (!tex) tex = Texture.all[0];
+		if (!tex) throw new Error('No texture to audit. Create one first with create_texture.');
+		const canvas = tex.canvas;
+		if (!canvas) throw new Error('Texture has no canvas to read.');
+		const w = tex.width || canvas.width, h = tex.height || canvas.height;
+		const ctx = canvas.getContext('2d');
+		const img = ctx.getImageData(0, 0, w, h).data;
+		const quant = (v) => (v >> 4); // 16-level bucket per channel
+		const keyOf = (r, g, b, a) => a < 8 ? 'a0' : ((quant(r) << 8) | (quant(g) << 4) | quant(b));
+		const total = new Map();
+		let quantTotal = new Set();
+		let transparent = 0;
+		for (let i = 0; i < w * h; i++) {
+			const r = img[i * 4], g = img[i * 4 + 1], b = img[i * 4 + 2], a = img[i * 4 + 3];
+			if (a < 8) { transparent++; total.set('a0', (total.get('a0') || 0) + 1); quantTotal.add('a0'); continue; }
+			const k = (r << 16) | (g << 8) | b;
+			total.set(k, (total.get(k) || 0) + 1);
+			quantTotal.add(keyOf(r, g, b, a));
+		}
+		const topColors = [...total.entries()]
+			.filter(([k]) => k !== 'a0')
+			.sort((x, y) => y[1] - x[1])
+			.slice(0, 12)
+			.map(([k, n]) => ({ color: '#' + k.toString(16).padStart(6, '0'), pixels: n }));
+		let islands = [];
+		const perIsland = p.per_island !== false;
+		if (perIsland) {
+			const scale = tex.width / (Project.texture_width || tex.width);
+			const byRect = new Map();
+			Cube.all.forEach((cube) => {
+				for (const dir in cube.faces) {
+					const f = cube.faces[dir];
+					if (!f || f.texture !== tex.uuid) continue;
+					const r = faceRect(f, scale);
+					if (r.w <= 0 || r.h <= 0) continue;
+					const k = r.x + ',' + r.y + ',' + r.w + ',' + r.h;
+					if (!byRect.has(k)) byRect.set(k, { rect: r, names: [] });
+					const entry = byRect.get(k);
+					if (entry.names.indexOf(cube.name) === -1) entry.names.push(cube.name);
+				}
+			});
+			islands = [...byRect.values()].map(({ rect, names }) => {
+				const local = new Map();
+				const localQuant = new Set();
+				for (let y = rect.y; y < Math.min(rect.y + rect.h, h); y++) {
+					for (let x = rect.x; x < Math.min(rect.x + rect.w, w); x++) {
+						const i = y * w + x;
+						const r = img[i * 4], g = img[i * 4 + 1], b = img[i * 4 + 2], a = img[i * 4 + 3];
+						if (a < 8) { local.set('a0', (local.get('a0') || 0) + 1); localQuant.add('a0'); continue; }
+						const k = (r << 16) | (g << 8) | b;
+						local.set(k, (local.get(k) || 0) + 1);
+						localQuant.add(keyOf(r, g, b, a));
+					}
+				}
+				const dom = [...local.entries()]
+					.filter(([k]) => k !== 'a0')
+					.sort((x, y) => y[1] - x[1]);
+				const area = Math.max(1, rect.w * rect.h);
+				return {
+					rect: [rect.x, rect.y, rect.w, rect.h],
+					cubes: names.slice(0, 4),
+					unique: dom.length + (local.has('a0') ? 1 : 0),
+					quantized_unique: localQuant.size,
+					dominant: dom.slice(0, 4).map(([k, n]) => ({
+						color: k === 'a0' ? 'transparent' : '#' + k.toString(16).padStart(6, '0'),
+						share: Math.round((n / area) * 100),
+					})),
+				};
+			}).sort((a2, b2) => b2.unique - a2.unique).slice(0, 60);
+		}
+		const uniqueTotal = [...total.keys()].filter((k) => k !== 'a0').length + (total.has('a0') ? 1 : 0);
+		return {
+			texture: tex.name || tex.uuid,
+			size: [w, h],
+			unique_total: uniqueTotal,
+			quantized_unique_total: quantTotal.size,
+			transparent_pixels: transparent,
+			top_colors: topColors,
+			islands,
+		};
+	},
+
 	paint_texture(p) {
 		requireProject();
 		const tex = findTexture(p.texture);
@@ -2927,6 +3410,8 @@ const commands = {
 		const topLight = p.top_light != null ? Number(p.top_light) : 0.12;
 		const bottomDark = p.bottom_dark != null ? Number(p.bottom_dark) : 0.22;
 		const glowRe = p.glow_regex ? new RegExp(p.glow_regex, 'i') : /_core$/i;
+		const pixelMode = String(p.style || '').toLowerCase() === 'pixel';
+		const bands = Math.max(1, Math.min(8, p.bands != null ? Number(p.bands) : 3));
 		const hardRe = /_cap$|_base$|chain|cord/i;                     // hard parts stay crisp
 		const faceMul = {
 			up: 1 + topLight, down: 1 - bottomDark,
@@ -2968,25 +3453,58 @@ const commands = {
 				ctx.fillStyle = g;
 				ctx.fillRect(r.x, r.y, r.w, r.h);
 			});
-			// 2) subtle low-contrast mottle (skip glow + hard parts for crisp edges)
-			if (mottle > 0) jobs.forEach(({ r, base, glow, hard, mul }) => {
-				if (glow || hard) return;
-				const count = Math.max(1, Math.floor(r.w * r.h * 0.10));
-				for (let i = 0; i < count; i++) {
-					const px = r.x + (Math.random() * r.w | 0);
-					const py = r.y + (Math.random() * r.h | 0);
-					ctx.fillStyle = shadeHex(base, mul * (1 - mottle + Math.random() * mottle * 2));
-					ctx.fillRect(px, py, 1, Math.random() < 0.5 ? 2 : 1);
-				}
-			});
-			// 3) smooth-brush blur per island (skip glow + hard parts)
-			if (blurAmt > 0) jobs.forEach(({ r, glow, hard }) => {
-				if (!glow && !hard) blurRect(ctx, r.x, r.y, r.w, r.h, blurAmt);
-			});
-		}, { edit_name: 'MCP: smooth bake', no_undo: false });
+			if (pixelMode) {
+				// PIXEL-ART MODE — flat quantized colour bands + boundary dither,
+				// NO mottle, NO blur. The pixel-art look lives and dies on a tiny
+				// palette: the smooth bake's gradient stops + per-island blur
+				// smear every face into dozens of one-off shades (the mush a
+				// screenshot review can only guess at). `bands` brightness
+				// bands per face between the top-light and bottom-dark extremes,
+				// quantized to whole-pixel rows so band edges snap to the grid.
+				jobs.forEach(({ r, base, glow, hard, mul }) => {
+					if (glow) return;                                   // cores keep their bright gradient
+					const top = mul * (1 + topLight), bot = mul * (1 - bottomDark);
+					const bh = Math.max(1, Math.round(r.h / bands));
+					for (let row = 0; row < bands; row++) {
+						const t = bands === 1 ? 0.5 : row / (bands - 1);
+						const f = top + (bot - top) * t;
+						const y0 = r.y + row * bh;
+						let hgt = (row === bands - 1) ? (r.y + r.h - y0) : bh;
+						if (hgt <= 0) continue;
+						ctx.fillStyle = shadeHex(base, f);
+						ctx.fillRect(r.x, y0, r.w, hgt);
+						// checkerboard dither across each band boundary pairs the
+						// two tones without adding new colours (off for hard parts)
+						if (!hard && row > 0 && r.w >= 4 && hgt >= 2) {
+							for (let dx = 0; dx < r.w; dx++) {
+								if ((dx + row) % 2 === 0) ctx.fillRect(r.x + dx, y0, 1, 1);
+							}
+						}
+					}
+				});
+			} else {
+				// 2) subtle low-contrast mottle (skip glow + hard parts for crisp edges)
+				if (mottle > 0) jobs.forEach(({ r, base, glow, hard, mul }) => {
+					if (glow || hard) return;
+					const count = Math.max(1, Math.floor(r.w * r.h * 0.10));
+					for (let i = 0; i < count; i++) {
+						const px = r.x + (Math.random() * r.w | 0);
+						const py = r.y + (Math.random() * r.h | 0);
+						ctx.fillStyle = shadeHex(base, mul * (1 - mottle + Math.random() * mottle * 2));
+						ctx.fillRect(px, py, 1, Math.random() < 0.5 ? 2 : 1);
+					}
+				});
+				// 3) smooth-brush blur per island (skip glow + hard parts)
+				if (blurAmt > 0) jobs.forEach(({ r, glow, hard }) => {
+					if (!glow && !hard) blurRect(ctx, r.x, r.y, r.w, r.h, blurAmt);
+				});
+			}
+		}, { edit_name: pixelMode ? 'MCP: smooth bake (pixel)' : 'MCP: smooth bake', no_undo: false });
 
 		Canvas.updateAll();
-		return { baked: true, cubes: cubes.length, faces: jobs.length, texture: serializeTexture(tex) };
+		return pixelMode
+			? { baked: true, style: 'pixel', bands, cubes: cubes.length, faces: jobs.length, texture: serializeTexture(tex) }
+			: { baked: true, cubes: cubes.length, faces: jobs.length, texture: serializeTexture(tex) };
 	},
 
 	// Paint specific cube faces using coordinates RELATIVE to each face's UV

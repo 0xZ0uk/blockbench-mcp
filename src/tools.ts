@@ -312,8 +312,19 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "check_model",
-    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, and Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one another'). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar). Returns a grouped issue list. Each issue may carry a structured `fix` patch {element, issue, tool, fix} whose `fix` is directly usable as arguments to the named tool (edit_element | edit_elements | set_cube_uv) — coplanar_overlap nudges one cube >=0.1 via edit_elements, no_texture assigns the project's single texture to the flagged face via set_cube_uv, uv_out_of_bounds clamps the UV into bounds via set_cube_uv, degenerate_size restores a 1-unit extent via edit_element, no_bone_parent attaches to the project's single bone via edit_element. Patches are proposals only — nothing is auto-applied; `fix` is omitted when no safe patch can be derived (zero-area UVs, ambiguous texture/bone choice). The top level also carries a machine-readable done-gate `gate: {errors, warnings, gate_pass}` — errors = degenerate_size + zero_uv + uv_out_of_bounds + coplanar_overlap, warnings = no_texture + no_bone_parent, `gate_pass` true iff errors == 0 (warnings don't fail the gate).",
-    obj({})
+    "Audit the model for problems that make results look broken: untextured faces (the 'gaps'), zero-area or out-of-bounds UVs, degenerate cube sizes, cubes not parented to a bone in animated formats, Z-FIGHTING (coplanar_overlap — two faces on the same plane that flicker/clip, the 'two squares inside one other'), SEE-THROUGH HOLES (enclosed_hole — a gap enclosed in ALL THREE projections, i.e. background visible through the model: edge-to-edge part junctions, buttplates short of the surface they cap, segmented curves) and large empty regions beside the main mass (detached_mass — verify floating piece vs a legal opening like a trigger-guard window). Run this after building and before/after texturing, then fix what it reports (for coplanar_overlap, nudge one cube by >=0.1 so the faces aren't coplanar; for enclosed_hole, extend a neighbouring cube to overlap and close the gap). Returns a grouped issue list. Each issue may carry a structured `fix` patch {element, issue, tool, fix} whose `fix` is directly usable as arguments to the named tool (edit_element | edit_elements | set_cube_uv) — coplanar_overlap nudges one cube >=0.1 via edit_elements, no_texture assigns the project's single texture to the flagged face via set_cube_uv, uv_out_of_bounds clamps the UV into bounds via set_cube_uv, degenerate_size restores a 1-unit extent via edit_element, no_bone_parent attaches to the project's single bone via edit_element. Patches are proposals only — nothing is auto-applied; `fix` is omitted when no safe patch can be derived (zero-area UVs, ambiguous texture/bone choice, enclosed_hole/detached_mass — close gaps by editing neighbouring cubes). The top level also carries a machine-readable done-gate `gate: {errors, warnings, gate_pass}` — errors = degenerate_size + zero_uv + uv_out_of_bounds + coplanar_overlap + enclosed_hole, warnings = no_texture + no_bone_parent + detached_mass, `gate_pass` true iff errors == 0 (warnings don't fail the gate).",
+    obj({
+      audit_space: {
+        type: "object",
+        description: "Tune the see-through-hole audit (all optional).",
+        properties: {
+          enabled: { type: "boolean", description: "Set false to skip the space audit (default on)." },
+          min_area: { type: "number", description: "Minimum enclosed-hole area in units^2 (default scales with model size, floor 0.25)." },
+          min_cells: { type: "number", description: "Minimum hole size in grid cells (default 1 — any cell counts)." },
+          detached_area: { type: "number", description: "Minimum area for a detached-mass hint in units^2 (default ~1% of the largest projection, floor 4)." },
+        },
+      },
+    })
   ),
   forward(
     "pack_uv",
@@ -350,20 +361,21 @@ export const tools: ToolDef[] = [
   ),
   forward(
     "add_mesh",
-    "Create a non-cuboid MESH primitive so models aren't limited to axis-aligned boxes — crystals/gems/shards, pyramids, wedges, cones, cylinders, planes. Great for crystal cores, blades, horns, teeth, gems and stylised VFX. NOTE: meshes need a mesh-capable format (free/generic/bedrock); GeckoLib & Java export cubes only — for those build crystals from cubes rotated 45° instead.",
+    "Create a non-cuboid MESH primitive so models aren't limited to axis-aligned boxes — crystals/gems/shards, pyramids, wedges, cones, cylinders, planes, and ARCS (a rectangle swept along a curve: banana magazines, curved swords, serpentine tubes, horns — as ONE mesh instead of a chain of touching cubes that leaves see-through slits). Great for crystal cores, blades, horns, teeth, gems and stylised VFX. NOTE: meshes need a mesh-capable format (free/generic/bedrock); GeckoLib & Java export cubes only — for those build curves from overlapping rotated cubes instead.",
     obj(
       {
         name: { type: "string" },
         shape: {
           type: "string",
-          enum: ["crystal", "gem", "shard", "diamond", "octahedron", "pyramid", "wedge", "prism", "cone", "cylinder", "plane"],
-          description: "Primitive shape (default 'crystal').",
+          enum: ["crystal", "gem", "shard", "diamond", "octahedron", "pyramid", "wedge", "prism", "cone", "cylinder", "plane", "arc", "sweep", "banana", "tube"],
+          description: "Primitive shape (default 'crystal'). 'arc'/'sweep'/'banana'/'tube' = rectangle swept along a circular arc in the XZ plane.",
         },
-        size: vec3("Bounding size [w,h,d] (default [8,8,8]). For a shard make h large."),
+        size: vec3("Bounding size [w,h,d] (default [8,8,8]). For a shard make h large. For arc: w = 2x sweep radius, h = height, d = cross-section thickness."),
         from: vec3("Lower-corner placement of the bounding box (defaults to centred on x/z at y=0)."),
         origin: vec3("Rotation pivot (defaults to the shape centre)."),
         rotation: vec3("Rotation in degrees [x,y,z]."),
-        segments: { type: "number", description: "Radial segments for cone/cylinder (default 8)." },
+        segments: { type: "number", description: "Radial segments for cone/cylinder (default 8); ARC segments along the sweep (higher = smoother curve)." },
+        sweep: { type: "number", description: "arc only: total sweep angle in degrees (default 60; negative mirrors the bend direction)." },
         texture: { type: "string", description: "Texture to apply (defaults to the project default)." },
         uv: { type: "array", items: { type: "number" }, description: "UV rect [x1,y1,x2,y2] every face maps into (defaults to the whole texture)." },
         parent: { type: "string", description: "uuid or name of the parent bone/group." },
@@ -654,11 +666,21 @@ export const tools: ToolDef[] = [
         description: "Region colour map by cube name: [{match:'leg|paw', color:'#5a3d22'}, ...]. `match` is a regex tested case-insensitively against the cube name; first hit wins. The key to matching a reference palette and not making everything one colour.",
         items: { type: "object" },
       },
-      noise: { type: "number", description: "Mottle amount 0..1 (default 0.13 — the skill-snippet amplitude)." },
-      blur: { type: "number", description: "Per-island smooth-brush blur 0..1 (default 0.55). 0 disables." },
+      noise: { type: "number", description: "Mottle amount 0..1 (default 0.13 — the skill-snippet amplitude). Ignored in pixel mode." },
+      blur: { type: "number", description: "Per-island smooth-brush blur 0..1 (default 0.55). 0 disables. Ignored in pixel mode." },
+      style: { type: "string", enum: ["smooth", "pixel"], description: "'pixel' = pixel-art bake: flat brightness bands + boundary dither, NO mottle/blur (the look dies under gradients). Default 'smooth'." },
+      bands: { type: "number", description: "pixel mode only: brightness bands per face, 1-8 (default 3; 1 = pure flat fill)." },
       top_light: { type: "number", description: "How much brighter up-faces are (default 0.12)." },
       bottom_dark: { type: "number", description: "How much darker down-faces are (default 0.22)." },
       glow_regex: { type: "string", description: "Regex for emissive cube names (default '_core$')." },
+    })
+  ),
+  forward(
+    "audit_texture",
+    "PALETTE AUDIT (numbers, not vibes): reads the texture's SOURCE bitmap and counts actual unique colours — overall plus per UV island for every box-UV cube face assigned to it, with each island's dominant colours and their share. `quantized_unique` buckets to 16-level steps: few buckets means a clean quantized sheet; a gradient/filter-smeared one explodes in unique colours while bucket counts stay high — the mush signal a screenshot review can only guess at. Purely a read — no pixels change. Use after smooth_bake/detail_cubes/paint_faces, especially before declaring a pixel-art look done.",
+    obj({
+      texture: { type: "string", description: "uuid or name of the texture (defaults to the project's default texture)." },
+      per_island: { type: "boolean", description: "Include per-UV-island colour stats (default true)." },
     })
   ),
   forward(
