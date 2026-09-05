@@ -56,19 +56,43 @@ test("mcp tools/call bridge error returns isError naming the field", async () =>
   });
 });
 
-test("mcp tools/call compare_views renders per-view MATCH/MISSING lines", async () => {
+test("mcp tools/call compare_views renders per-view verdict/missing lines", async () => {
   const bridge = {
     count: 2,
     matched: 1,
     differed: 0,
     missing: ["preset:top"],
+    metrics_passed: 0,
+    metrics_failed: 1,
+    fallback_byte_only: 0,
     projection_restored: true,
     comparisons: [
       {
         view: "preset:front",
-        match: true,
+        match: false,
+        identical: false,
         compared: true,
-        delta: "identical to pinned reference (image/png 70 bytes 1x1)",
+        method: "alpha",
+        metrics: {
+          iou: 0.91,
+          area_ratio: 1.02,
+          aspect_ref: 1.0,
+          aspect_shot: 1.02,
+          aspect_delta_pct: 2,
+          centroid_delta_px: [1, 0],
+          regions: [1, 1, 0.8, 1, 1, 1, 0.9, 1, 1],
+        },
+        verdict: {
+          pass: false,
+          checks: [
+            { name: "iou", pass: true, threshold: 0.85, detail: "IoU 0.91 vs required 0.85" },
+            { name: "area", pass: true, threshold: 0.25, detail: "area ratio 1.02, allowed ±25%" },
+            { name: "aspect", pass: true, threshold: 0.1, detail: "aspect 1→1.02 (+2%, allowed ±10%)" },
+            { name: "centroid", pass: false, threshold: 0.15, detail: "centroid shifted 1px (2% of frame, allowed ±15%)" },
+          ],
+          reasons: ["centroid shifted 1px (2% of frame, allowed ±15%)"],
+        },
+        delta: "differs from pinned reference: 4096/4096 bytes differ (first diff at byte 70); shot image/png 70 bytes 1x1 vs reference image/png 70 bytes 1x1",
         reference: { mime: "image/png", bytes: 70, width: 1, height: 1 },
         shot: { mime: "image/png", bytes: 70, width: 1, height: 1, ortho: true, px_per_unit: 8, wireframe: false },
         projection_restored: true,
@@ -90,8 +114,10 @@ test("mcp tools/call compare_views renders per-view MATCH/MISSING lines", async 
     assert.equal(result.isError ?? false, false);
     const texts = result.content.filter((c) => c.type === "text").map((c) => c.text);
     assert.equal(texts.length, 3);
-    assert.match(texts[0], /Compared 2 view\(s\): 1 match, 0 differ, 1 missing reference/);
-    assert.match(texts[1], /View preset:front: MATCH/);
+    assert.match(texts[0], /Compared 2 view\(s\): 1 identical, 0 differ, 1 missing reference — metrics: 0 pass, 1 fail/);
+    assert.match(texts[1], /View preset:front: FAIL \(iou 0\.91, method alpha\)/);
+    assert.match(texts[1], /FAIL centroid: centroid shifted 1px/);
+    assert.match(texts[1], /regions: 1,1,0\.8,1,1,1,0\.9,1,1 \(weakest 0\.8\)/);
     assert.match(texts[2], /View preset:top: MISSING REFERENCE.*Field "view"/);
   });
 });
