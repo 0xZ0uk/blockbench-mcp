@@ -167,6 +167,17 @@ export const TOOL_WORD_ALLOWLIST = new Set(
     "stock_wood",
     "receiver_steel",
     "barrel_steel",
+    "gun",
+    "receiver",
+    "barrel",
+    "handguard",
+    "stock",
+    "mag",
+    "trigger",
+    "sights",
+    "arms_left",
+    "arms_right",
+    "animation",
   ].sort()
 );
 

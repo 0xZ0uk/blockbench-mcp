@@ -114,7 +114,9 @@ This is the condition an agent checks before `save_project` — not after, not i
    single-item forms.
 3. **Rotation discipline.** A single cube only rotates cleanly on one axis; for compound angles or
    posable parts, put cubes in a GROUP and rotate the group. Verify pose direction by screenshot,
-   never by assumption.
+   never by assumption. But rotation is also a VOLUME tool: rotated-segment chains (each
+   single-axis, overlapping the last, angles walked in steps) are the cube-only way to build
+   curves and rake — the pro-AK pattern. Don't reserve rotation for posing.
 4. **REVIEW CRITICALLY.** When a screenshot looks off, FIX it — never write "good enough" about a
    flaw you can see. Compare against the reference, not your own lowered bar. The most common
    self-deception is rationalising a wrong pose or proportion after seeing it.

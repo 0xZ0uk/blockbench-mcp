@@ -56,7 +56,24 @@ Annotate relative body-part sizes while you write it — big dominant torso with
 small reads compact; a tall hump plus long neck plus high forward head plus long thin legs reads
 camel, and no texture pass fixes that later.
 
-Exit gate: the written plan exists with all five items plus the scale line, and the project
+For a prop/weapon, the plan's shape is different — part list, animation intent, reference pins:
+
+```text
+facing: muzzle at -Z
+parts: receiver / barrel / handguard / stock / mag / trigger / sights / attachment
+animation intent: viewmodel -> idle, fire, reload (pivots derive from this)
+landmarks: fire-control cluster at receiver rear; mag curve forward of trigger;
+  stock length ~ receiver-to-butt distance; sight line continuous muzzle-to-eye
+reference pins: blueprint west + east at real scale (50% opacity on one)
+```
+
+Pin the reference INTO the project during intake, not beside it: `set_reference_image` with the
+blueprint attached on at least two sides (professional study: west + east, one at 50% opacity)
+at real model scale. A reference only in chat history is a reference the build phase cannot
+see.
+
+Exit gate: the written plan exists with all five items plus the scale line (creature plans) or
+the part list plus animation intent plus pinned references (prop plans), and the project
 format is chosen (generic game models default to free, which supports cubes and meshes;
 cube-only formats need rotated-cube approximations instead — confirm with `list_formats`).
 No project or geometry call has happened yet.
@@ -72,6 +89,17 @@ decorations — with every group origin at the real JOINT (shoulder, hip, neck) 
 pivots correctly. Parents may reference siblings created earlier in the same call. Always set
 `dedupe_by_name:true` on the bulk call so a timed-out call retried once never duplicates
 bones. No cubes, no meshes, no decoration in this phase — pivots only.
+
+Props get a skeleton too, not just creatures. A weapon's bones are its PARTS, named for what
+they are (`gun` root; `receiver`, `barrel`, `handguard`, `stock`, `mag`, `trigger`, `sights`;
+plus `arms_left`/`arms_right` at the grip if hands will hold it), with origins at the part's
+real joint (mag latch, receiver rear, grip top). Reference study of a professional AK-47
+viewmodel found exactly this: `gun → stock/mag/slide/selector/attachment/arms(L/R)`, ten bones
+for one prop. The reason is mechanical: viewmodel/weapon animations (idle, fire, reload)
+animate PART pivots, region colours and material targeting key off part names, and per-part
+selection during fixes needs addressable groups. If any animation is even possible, the
+skeleton decides it — define the animation set BEFORE geometry (Phase 1 question: "what will
+this model be doing?").
 
 Exit gate: the hierarchy is complete with zero geometry — the project reports groups but no
 cubes (confirm with `get_status` counts or a `query_elements` lookup). A misplaced pivot here
@@ -125,11 +153,23 @@ Decompose by rule, not by feel:
   a part whose name carries no material hint silently bakes the fallback colour, and the
   reference's material cues (walnut furniture, blued steel) vanish from the final render.
   This failure shipped once: a rifle rebuilt with unnamed furniture cubes came back all-gray.
-- Cap detail-cube size: no detail cube longer than about one third of its parent mass's longest
-  axis. Small cubes parent to the mass's bone, penetrate rather than touch, and stagger depths
-  so no two faces share a plane.
-- Rotation discipline: a single cube rotates cleanly on one axis only. Compound angles go on a
-  rotated group — nest groups for multi-axis angles.
+- Cap detail-cube size by role, not one global threshold: no detail cube longer than about one
+  third of its parent mass's longest axis. Small cubes parent to the mass's bone, penetrate
+  rather than touch, and stagger depths so no two faces share a plane.
+- Detail density: a professional prop study measured 82 cubes with the smallest at 0.16 units —
+  pins, screws, sight blades, and thin rims ARE geometry when the format gives them per-face
+  UVs. In per-face-UV formats (free/generic, per-face uv rects), go small freely; the ≥1-unit
+  minimum is a BOX-UV-only rule (box UV rounds sub-unit faces to zero-area islands). Ask which
+  UV regime the project uses before capping detail.
+- **Rotation is a volume tool, not just a posing tool.** On a professional AK-47 study, 55% of
+  cubes carried a single-axis rotation (−5° to −142°): rotated-segment chains are how
+  cube-only builds express curves and rake — the banana magazine is 3-4 cubes at a descending
+  angle ladder (e.g. −67.5° → −62.5° → −80°), a raked grip is one −20° cube, a tilted sight
+  a −27.5° blade. The recipe: chain segments so each overlaps the previous, walk the angle in
+  steps (never one huge twist), keep every rotation single-axis. A cube rotated 45° reads as a
+  crystal/diamond/blade; a rotated chain reads as a curve. In mesh-capable formats `add_mesh
+  shape:arc` is the one-mesh alternative; in cube-only formats the angle ladder IS the curve.
+  Multi-axis compound angles still go on a rotated group — nest groups.
 
 Exit gate: every primary mass is decomposed per the three rules above — no single stretched
 box left where the reference bends, joints, or tapers.
@@ -261,3 +301,10 @@ a cluster floating mid-receiver reads wrong instantly.
   because each fix pass can silently drop the cues that made the model read. Furniture colour
   and mag curve were carried by nothing but the cubes' names and geometry — both got lost
   when the rebuild regenerated cubes without them.
+- Reference study of a professional AK-47 viewmodel (82 cubes, 10 bones, 9 animations,
+  Sketchfab): 55% of cubes single-axis-rotated (angle ladders build the curve a swept mesh
+  would); smallest detail cube 0.16u (sub-unit detail lives in per-face-UV formats);
+  cubes named "cube" (colour comes from the atlas, not names — two valid routing regimes,
+  see blockbench-texturing); reference blueprints pinned inside the project on two sides.
+  The gap between amateur and pro here was NOT detail count — it was rotation-as-volume,
+  part skeletons, and density discipline.
