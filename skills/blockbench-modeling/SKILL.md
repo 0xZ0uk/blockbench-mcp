@@ -113,9 +113,18 @@ Decompose by rule, not by feel:
   is mesh-capable. Crystal, gem, shard, diamond, and octahedron cover cores, gems, and shards
   (give shard a tall height); pyramid, wedge, and prism cover beaks, blades, fins, roofs, and
   teeth; cone and cylinder cover horns, pillars, trunks, and tails (radial segments default 8);
+  **arc** covers any curved long part — banana magazines, curved swords, serpentine tubes,
+  horns — as ONE swept mesh (`size:[w,h,d]` with w = 2× sweep radius, `segments` for
+  smoothness, `sweep` in degrees, negative mirrors the bend). A curved part built from N
+  touching cubes is the classic slit factory AND reads as a "bent polygon" instead of a curve;
   plane, optionally crossed for volume, covers thin fins, leaves, and paper. One primitive wins
   as soon as five axis-aligned boxes still read boxy. In cube-only formats approximate the same
   shapes with cubes rotated 45 degrees instead.
+- Name cubes by MATERIAL as you segment (`handguard_wood`, `grip_wood`, `stock_wood`,
+  `receiver_steel`, `barrel_steel`). The texturing bake routes colour by cube-name regex —
+  a part whose name carries no material hint silently bakes the fallback colour, and the
+  reference's material cues (walnut furniture, blued steel) vanish from the final render.
+  This failure shipped once: a rifle rebuilt with unnamed furniture cubes came back all-gray.
 - Cap detail-cube size: no detail cube longer than about one third of its parent mass's longest
   axis. Small cubes parent to the mass's bone, penetrate rather than touch, and stagger depths
   so no two faces share a plane.
@@ -224,12 +233,31 @@ and lower limbs for bending and scale heights to the unit convention.
 Capes, cloaks, and skirts: shingled rows of small panels, long at the back, open at the front
 when a chest detail should stay visible. Never blanket the torso unless the reference does.
 
+Long guns (rifle/carbine, facing -Z, muzzle at -Z): the silhouette cues that make it read are
+ordered by weight — (1) furniture colours (wood handguard/stock/grip vs steel), (2) the curved
+magazine forward of the trigger, (3) stock length, (4) sight line. Landmarks: receiver is the
+shortest tall mass (about 1/3 of the metal length, NOT taller than 2x its own depth); the
+stock runs nearly the full receiver-to-butt distance (a stub stock is the #1 proportion
+drift); handguard wraps the barrel forward of the receiver and OVERLAPS the barrel line;
+gas block sits above the handguard's front third with the front sight post beyond it; grip
+hugs the receiver's rear underside, sloping back ~15-20°; magazine drops from just forward of
+the trigger guard and curves forward as it descends; front sight height ≈ rear sight height ≈
+the sight line. Fire-control cluster (trigger/grip/mag) sits at the receiver's REAR quarter —
+a cluster floating mid-receiver reads wrong instantly.
+
 ## Appendix — worked lessons
 
 - A first grizzly read as a camel-bear: tall hump, long neck, high forward head, long thin
   legs. Rebuilding compact — small low head, subtle hump, stubby legs, big body — fixed it.
   That is why the silhouette gate precedes all detail.
-- Decorative panels z-fight when many overlap coplanar — fewer pieces, each with a unique
-  staggered outer depth.
+- Decorative panels z-fight when many overlap coplanar — fewer pieces, each with a
+  unique staggered outer depth.
 - Bodies and limbs usually share the head's base colour with darker accents only at the
   extremities — do not default everything to brown.
+- A pixel-art AK rebuilt "worse" after fixes: the texture pass got cleaner (palette halved,
+  holes sealed) but the rebuild dropped the wood furniture (handguard/grip/mag baked gray)
+  and the mag lost its curve — clean pixels, broken read. Lesson: the silhouette-and-material
+  contract from Phase 1 survives every repair pass; verify it explicitly after any rebuild,
+  because each fix pass can silently drop the cues that made the model read. Furniture colour
+  and mag curve were carried by nothing but the cubes' names and geometry — both got lost
+  when the rebuild regenerated cubes without them.

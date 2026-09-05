@@ -5,9 +5,36 @@ description: Texture models in Blockbench through the BlockbenchMCP tools. Use w
 
 # Blockbench texturing — smooth, stylised, readable
 
-The house look is **smooth, not noisy**: soft gradients, directional face shading, subtle mottle,
-per-island blur. No harsh per-pixel noise, no dark 1px outlines on every face — that reads as a
-dirty grid. Think stylised low-poly (Synty-style), not retro pixel art.
+The look is chosen by the reference/LOOK.md, and it is one of TWO modes:
+
+- **Smooth (default)** — soft gradients, directional face shading, subtle mottle,
+  per-island blur. No harsh per-pixel noise, no dark 1px outlines on every face —
+  that reads as a dirty grid. Stylised low-poly (Synty-style).
+- **Pixel** (`smooth_bake {style:"pixel", bands:1-8}`) — flat quantized brightness
+  bands with checkerboard dither at band boundaries, NO mottle, NO blur. Use when
+  the reference or the project's LOOK.md is pixel art / retro sprite. Never run
+  the smooth bake on a pixel-art project: the gradient + blur pass smears every
+  face into dozens of one-off shades and destroys the look — this exact failure
+  shipped once (a pixel AK came out with a 223-colour muddy palette).
+
+## Material routing is a BAKE step, not a hope
+
+Materials read because value separates them (dark walnut vs mid steel), and the
+bake only knows a cube's material through its NAME. So:
+
+1. Name cubes by material when building (`handguard_wood`, `grip_wood`,
+   `stock_wood`, `receiver_steel`, `barrel_steel`) or route with
+   `colors: [{match:"handguard|grip|stock", color:"#5c3d1f"},
+   {match:"receiver|barrel", color:"#6f7378"}]` at every bake call.
+2. **Verify the routing with `audit_texture` after the bake** (see review pass):
+   every island's dominant colour must be its material's palette entry. An
+   island whose dominant colour equals the tool's default base means routing
+   failed — the part silently kept the fallback.
+3. A reference that reads as "AK", "walnut stock", "blued steel" is a palette
+   contract: wood parts get the wood entry, metal parts the metal entry. A
+   rifle whose handguard/grip/mag bake gray is a FAILED bake even if every
+   pixel is clean — silhouette cues live in the material colours.
+
 
 ## Flat-first rule (texture as exception)
 
@@ -60,6 +87,10 @@ with `paint_faces` after the bake.
   default everything to brown.
 - Directional shading stays within the palette: derive light/dark tones from the base colour
   (×1.1 / ×0.85), don't introduce new hues per face.
+- Pixel mode: palette discipline is the whole game — a quantized look allows ~2-4 tones per
+  material and nothing else. After the bake, `audit_texture` per island: every island's
+  dominant colour must be a palette entry, and `unique_total` should sit within a few of your
+  intended palette size. A mushrooming count = gradients leaked in; re-bake flat.
 
 ## Glow / emissive (`*_core` cubes)
 
@@ -100,4 +131,12 @@ and image size — drift arrives as delta text to address, not a screenshot to r
    shading outside the palette, glow cores reading flat).
 3. After features, compare again — crisp details must survive at the pinned scale without
    reintroducing the dirty grid. Address every differ before export.
-4. Confirm `check_model` shows zero errors (no untextured-face gaps) before `export_textures`.
+4. Confirm `check_model` shows zero errors (no untextured-face gaps, no gap_slit) before
+   `export_textures`.
+5. Run `audit_texture` and reconcile it against the reference palette BEFORE declaring the
+   texture done: per-island dominant colours must match the intended material for that island
+   (see material routing above), and pixel-mode `unique_total` must sit within a few of the
+   intended palette size. This read is numbers-on-the-source-bitmap — it catches failures a
+   screenshot cannot distinguish from viewport filtering (this exact gap shipped once: a
+   rifle's handguard/grip/mag baked gray instead of walnut and nobody caught it until the
+   screenshot was reviewed by eye).
