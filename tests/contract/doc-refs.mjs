@@ -23,8 +23,30 @@
  * never throws for validation findings, never touches the network.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+
+/** Path guard resolution: exact file, else expand a single trailing `*`
+ * glob against the named directory (docs legitimately reference file
+ * families like docs/look/LOOK-*.md). */
+export function docPathExists(repoRoot, docDir, p) {
+  if (existsSync(join(repoRoot, p)) || existsSync(join(docDir, p))) return true;
+  const star = p.indexOf("*");
+  if (star < 0) return false;
+  const slash = p.lastIndexOf("/");
+  if (slash < 0 || slash > star) return false;
+  const dir = p.slice(0, slash);
+  const pattern = p.slice(slash + 1);
+  const re = new RegExp(
+    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]*") + "$"
+  );
+  for (const base of [join(repoRoot, dir), join(docDir, dir)]) {
+    try {
+      if (readdirSync(base).some((f) => re.test(f))) return true;
+    } catch {}
+  }
+  return false;
+}
 
 /** Docs scanned by the live-tree guard. */
 export const SCANNED_DOCS = [
@@ -34,6 +56,8 @@ export const SCANNED_DOCS = [
   "skills/blockbench-modeling/SKILL.md",
   "skills/blockbench-texturing/SKILL.md",
   "skills/blockbench-animation/SKILL.md",
+  "skills/blockbench-look/SKILL.md",
+  "skills/blockbench-look/references/look-checks.md",
   "skills/blockbench-modeling/references/modeling-scripts.md",
   "skills/blockbench-texturing/references/texturing-scripts.md",
   "skills/blockbench-animation/references/animation-scripts.md",
@@ -130,6 +154,10 @@ export const TOOL_WORD_ALLOWLIST = new Set(
     "warning",
     "wedge",
     "while",
+    "resolution",
+    "palette",
+    "flat",
+    "smooth",
   ].sort()
 );
 
@@ -139,7 +167,11 @@ export const TOOL_WORD_ALLOWLIST = new Set(
  * the repo root, add it here with a TODO pointing at its ticket — never
  * widen the extractor to silence it.
  */
-export const PATH_ALLOWLIST = new Set([]);
+export const PATH_ALLOWLIST = new Set([
+  // Glob-ish family references: the scanner stops paths at the `*`, so the
+  // extracted prefix alone never resolves. Verified against docs/look/.
+  "docs/look/LOOK-",
+]);
 
 const REPO_ROOTS = new Set(["skills", "plugin", "src", "dist", "docs", "tests"]);
 /** Bare repo-rooted path tokens, compiled from REPO_ROOTS so the two stay coupled. */
@@ -306,7 +338,7 @@ export function validateDocRefs({ registry, repoRoot, docs }) {
       pathMentions++;
       if (PATH_ALLOWLIST.has(m.path)) continue;
       const docDir = join(repoRoot, dirname(file));
-      const resolvable = existsSync(join(repoRoot, m.path)) || existsSync(join(docDir, m.path));
+      const resolvable = docPathExists(repoRoot, docDir, m.path);
       if (!resolvable) {
         issues.push({
           file,
