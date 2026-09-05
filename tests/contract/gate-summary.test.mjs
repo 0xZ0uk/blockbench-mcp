@@ -186,6 +186,9 @@ test("gate summary: classification map is explicit and fail-closed", () => {
     zero_uv: "error",
     uv_out_of_bounds: "error",
     coplanar_overlap: "error",
+    gap_slit: "error",
+    see_through_opening: "warning",
+    floating_piece: "warning",
     no_texture: "warning",
     no_bone_parent: "warning",
   });

@@ -6,7 +6,7 @@ never leave it to lie.
 
 - [ ] **MCP catalogue (`tools/list`)** — Reach: spawn `node dist/index.js`
   (stdio), send `initialize` then `tools/list`. Drive: helper `doctor.mjs`
-   or a one-off stdio script. Proved when: response lists 55 tools including
+   or a one-off stdio script. Proved when: response lists 56 tools including
    `get_status`, `add_cube`, `add_cubes`, `check_model`, `screenshot_views`,
    `edit_elements`, `delete_elements`, `measure`, `query_elements`, `set_reference_image`,
    `compare_views`, `smooth_bake`, `export_textures`, `preview_pose`.

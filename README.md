@@ -58,7 +58,7 @@ There are two pieces:
 - 🧠 **Guidance** — `get_guide` returns a modeling/texturing playbook so the AI builds detailed, rotated models instead of a few flat boxes.
 - 🧩 **Plugins** — search, install (by store id, URL, or file) and uninstall Blockbench plugins, so the AI can set up formats like GeckoLib itself.
 - 🔧 **Escape hatch** — `execute_script` runs arbitrary Blockbench JS for anything not covered by a dedicated tool.
-- 🟢 **55 tools** total, all over a single local connection.
+- 🟢 **56 tools** total, all over a single local connection.
 
 ## Requirements
 
@@ -217,7 +217,7 @@ decides keep/drop.
 | **Status & guidance** | `get_status`, `get_guide`, `list_formats` |
 | **Project** | `new_project`, `set_project_meta`, `save_project`, `export_project`, `load_project`, `close_project` |
 | **Geometry** | `add_group`, `add_cube`, `add_groups`, `add_cubes`, `add_plane`, `add_mesh`, `mirror_element`, `edit_element`, `edit_elements`, `delete_element`, `delete_elements`, `list_outliner`, `query_elements`, `get_element`, `measure`, `check_model` |
-| **UV & textures** | `pack_uv`, `create_texture`, `create_vfx_texture`, `set_texture_render_mode`, `paint_texture`, `smooth_bake`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `export_textures`, `list_textures`, `get_texture` |
+| **UV & textures** | `pack_uv`, `create_texture`, `create_vfx_texture`, `set_texture_render_mode`, `paint_texture`, `smooth_bake`, `detail_cubes`, `paint_faces`, `apply_texture`, `set_cube_uv`, `import_texture`, `resize_texture`, `export_textures`, `list_textures`, `get_texture`, `audit_texture` |
 | **Animation** | `create_animation`, `add_keyframe`, `add_keyframes`, `preview_pose`, `list_animations`, `remove_animation` |
 | **View** | `set_camera_angle`, `screenshot`, `screenshot_views`, `set_reference_image`, `compare_views` |
 | **Plugins** | `list_plugins`, `install_plugin`, `uninstall_plugin` |

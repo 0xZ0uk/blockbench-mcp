@@ -43,7 +43,8 @@ get_status / get_guide
  -> add_cubes + add_mesh      (bulk: 20-100 cubes; segments; mirror L/R in the same call)
  -> pack_uv                   (REQUIRED before texturing box-UV cubes)
  -> create_texture            (mid-tone fill; 64-192 px depending on cube count)
- -> bake                      (`smooth_bake` — see blockbench-texturing)
+ -> bake                      (`smooth_bake`; style:"pixel" for pixel-art projects — see blockbench-texturing)
+ -> audit_texture             (palette read: per-island dominant colours must match the intended material)
  -> paint features            (eyes, claws, runes, glow cores — AFTER the bake)
  -> screenshot_views          (front / side / back / iso AND the reference's exact angle)
  -> check_model               (read the gate field — see Done-gate; apply fix patches)
@@ -60,9 +61,17 @@ data (the Done-gate below), not on vibes.
 This is the condition an agent checks before `save_project` — not after, not instead of it.
 
 - Run `check_model` and read its machine-readable `gate` field: require `gate.errors === 0`
-  and `gate.gate_pass === true` (zero errors; warnings such as untextured faces do not fail
-  the gate). Errors are geometry/UV defects that break the render; warnings are missing
-  assignments recoverable without geometry changes.
+  and `gate.gate_pass === true` (zero errors; warnings such as untextured faces or the space
+  audit's see-through openings do not fail the gate). Errors are geometry/UV defects that break
+  the render — including `gap_slit`, the crack-thin see-through voids that edge-to-edge part
+  junctions leave (fix by overlapping the neighbouring cube ≥0.5 units, or rebuilding a curved
+  part as `add_mesh shape:arc`); warnings are recoverable assignments and reference-check
+  findings (`see_through_opening` may be a designed window).
+- Run `audit_texture` and reconcile against the intended palette: every UV island's dominant
+  colour must be the material you intended for that part (furniture wood vs steel), and for
+  pixel-art projects `unique_total` must sit within a few of the intended palette size. A part
+  that kept the bake's fallback colour is a silent routing failure — fix the `colors` map or
+  the cube names, re-bake, re-audit.
 - Separately capture blueprint side/front/top via `screenshot_views` with ortho pinned and
   the same `px_per_unit` value, and confirm UVs do not overlap. UV defects already fail the
   gate as errors; the blueprint views are the visual confirmation at a measurable scale.
@@ -105,7 +114,9 @@ This is the condition an agent checks before `save_project` — not after, not i
    single-item forms.
 3. **Rotation discipline.** A single cube only rotates cleanly on one axis; for compound angles or
    posable parts, put cubes in a GROUP and rotate the group. Verify pose direction by screenshot,
-   never by assumption.
+   never by assumption. But rotation is also a VOLUME tool: rotated-segment chains (each
+   single-axis, overlapping the last, angles walked in steps) are the cube-only way to build
+   curves and rake — the pro-AK pattern. Don't reserve rotation for posing.
 4. **REVIEW CRITICALLY.** When a screenshot looks off, FIX it — never write "good enough" about a
    flaw you can see. Compare against the reference, not your own lowered bar. The most common
    self-deception is rationalising a wrong pose or proportion after seeing it.
@@ -121,11 +132,14 @@ This is the condition an agent checks before `save_project` — not after, not i
   `list_outliner` is the legacy full-tree dump (fallback for tiny models, not the lead).
 - Project: `new_project` (pick the format first), `set_project_meta`, `save_project`,
   `load_project`, `close_project`, `export_project`.
-- Build: `add_groups`, `add_cubes`, `add_mesh` (crystals/cones/cylinders/wedges — mesh-capable
-  formats only), `add_plane` (VFX/particles), `mirror_element`, `edit_element(s)`,
-  `delete_element(s)`, `measure`, `check_model`.
-- Texture: `pack_uv`, `set_cube_uv`, `create_texture`, `smooth_bake` (palette-first base coat),
-  `detail_cubes` (base coat + streaks/edge-darkening knobs),
+- Build: `add_groups`, `add_cubes`, `add_mesh` (crystals/cones/cylinders/wedges/ARCS — the arc
+  sweep is the one-mesh answer to curved long parts like banana magazines and horns),
+  `add_plane` (VFX/particles), `mirror_element`, `edit_element(s)`,
+  `delete_element(s)`, `measure`, `check_model` (includes the space audit for see-through
+  slits, openings, and floating pieces).
+- Texture: `pack_uv`, `set_cube_uv`, `create_texture`, `smooth_bake` (palette-first base coat;
+  `style:"pixel"` for quantized flat-band looks), `detail_cubes` (base coat + streaks/edge-darkening knobs),
+  `audit_texture` (per-island colour counts on the source bitmap — the palette gate),
   `paint_faces` (features, face-relative coords), `paint_texture`, `apply_texture`,
   `import_texture`, `resize_texture`, `export_textures` (PNG export to disk),
   `list_textures`, `get_texture`,
@@ -168,6 +182,17 @@ Run `list_formats` to see what this install supports, then pick by target:
 ## Review hygiene
 
 Every build session ends with: `check_model` gate passing (`gate.errors === 0`,
-`gate.gate_pass === true`), blueprint side/front/top at the pinned `px_per_unit` scale compared
-honestly against the reference, project saved via `save_project`, exports written. If a flaw is
-visible, the session is not done.
+`gate.gate_pass === true`), `audit_texture` reconciled against the intended palette (island
+materials correct, pixel counts bounded), blueprint side/front/top at the pinned `px_per_unit`
+scale compared honestly against the reference, project saved via `save_project`, exports
+written. If a flaw is visible, the session is not done.
+
+## Repair-pass rule (rebuilds must not regress the read)
+
+When fixing or rebuilding an existing model, list the silhouette/material cues that made the
+reference read (furniture colours, part curves, proportions) BEFORE touching geometry, and
+re-verify each one after the rebuild — a fix pass can silently drop a cue (a rebuild regenerates
+cubes without their material names; a "cleaner" mag can lose its curve). Clean pixels on a
+model that no longer reads is a regression, not progress. This failure shipped once: a
+pixel-art AK's texture improved (palette halved, holes sealed) while the rebuild deleted the
+wood furniture and the banana curve — caught only by human screenshot review.
