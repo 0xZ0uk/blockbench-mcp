@@ -61,7 +61,7 @@ preference:
    bridge stubbed. This is the gate for precision-ticket changes.
 2. **MCP stdio (your code, your process):** spawn `node dist/index.js`,
    send JSON-RPC `initialize` then `tools/list`, assert the catalogue
-   (currently 55 tools). Example drive script pattern: spawn with piped
+   (currently 56 tools). Example drive script pattern: spawn with piped
    stdio, write `{"jsonrpc":"2.0","id":1,"method":"initialize",...}` then
    `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`, read the
    `tools` array on stdout. Kill your PID after.

@@ -423,9 +423,11 @@ const r4 = (n) => Math.round(n * 10000) / 10000;
  * Machine-readable done-gate for check_model (ticket #22).
  * Classification (explicit, documented here and in src/tools.ts):
  * - error (fails the gate): degenerate_size, zero_uv, uv_out_of_bounds,
- *   coplanar_overlap — geometry/UV defects that break the render.
- * - warning (gate still passes): no_texture, no_bone_parent — missing
- *   assignments recoverable without geometry changes.
+ *   coplanar_overlap, gap_slit — geometry/UV defects that break the render.
+ * - warning (gate still passes): no_texture, no_bone_parent,
+ *   see_through_opening, floating_piece — missing assignments recoverable
+ *   without geometry changes, and space findings that need a reference
+ *   check (designed window vs missing face; orphan vs sub-assembly).
  * Unknown future kinds default to error (fail-closed) so the gate never
  * silently passes an unclassified problem.
  * Returns {errors, warnings, gate_pass} with gate_pass true iff errors == 0.
@@ -1572,8 +1574,11 @@ function buildVfxCanvas(w, h, frames, style, palette, seed, softEdge) {
 
 // ---------------------------------------------------------------------------
 // Mesh primitives — non-cuboid geometry (crystals, blades, cones, prisms…) so
-// models aren't limited to axis-aligned boxes. Returns vertices in a [0..w/h/d]
-// box and faces as arrays of vertex indices (3 or 4 per face).
+// models aren't limited to axis-aligned boxes. Faces come back as arrays of
+// vertex indices (3 or 4 per face). Most shapes fill a [0..w/h/d] box; arc
+// sweeps about the model origin instead (ring centres on a circle of radius
+// w/2, cross-section spanning y 0..h and z 0..d), so from/origin do not box
+// it the way they box the others.
 // ---------------------------------------------------------------------------
 
 function meshPrimitive(shape, w, h, d, segments, sweepDeg) {
@@ -1673,18 +1678,30 @@ function meshPrimitive(shape, w, h, d, segments, sweepDeg) {
 			const rings = [];
 			for (let i = 0; i <= nseg; i++) rings.push(ringAt(i));
 			const N = rings.length;
-			// tube sides
+			// tube sides (winding verified via cross products at ring 0: underside
+			// normal -y, topside +y, this one is the OUTER (convex) wall, the
+			// next one the INNER (concave) wall)
 			for (let i = 0; i < N - 1; i++) {
 				const A = rings[i], B = rings[i + 1];
 				faces.push([A[0], A[1], B[1], B[0]]);       // underside
 				faces.push([A[3], B[3], B[2], A[2]]);       // topside
-				faces.push([A[1], A[2], B[2], B[1]]);       // inner wall
-				faces.push([A[0], B[0], B[3], A[3]]);       // outer wall
+				faces.push([A[1], A[2], B[2], B[1]]);       // outer wall (convex side)
+				faces.push([A[0], B[0], B[3], A[3]]);       // inner wall (concave side)
 			}
-			// flat end caps
+			// flat end caps — sign-aware winding. The natural corner order
+			// [0,1,2,3] always produces a normal along +tangent (verified by cross
+			// product at ring 0), so for a POSITIVE sweep the natural order faces
+			// INTO the tube at the start cap (outward = -travel) and the reversed
+			// order faces INTO it at the end cap (outward = +travel). Without this
+			// both caps render inside-out under single-sided rendering.
 			const c0 = rings[0], cN = rings[N - 1];
-			faces.push([c0[0], c0[1], c0[2], c0[3]]);
-			faces.push([cN[3], cN[2], cN[1], cN[0]]);
+			if (sweep >= 0) {
+				faces.push([c0[3], c0[2], c0[1], c0[0]]);   // start: outward = -travel
+				faces.push([cN[0], cN[1], cN[2], cN[3]]);   // end: outward = +travel
+			} else {
+				faces.push([c0[0], c0[1], c0[2], c0[3]]);   // start: outward = +travel
+				faces.push([cN[3], cN[2], cN[1], cN[0]]);   // end: outward = -travel
+			}
 			break;
 		}
 		default:
@@ -1843,7 +1860,7 @@ const TEXTURING_GUIDE = [
 	'   Compare to the reference palette. Recolour with detail_cubes `colors` and repeat.',
 	'',
 	'6. PIXEL-ART LOOK (flat quantized colour bands, no gradients) — smooth_bake',
-	'   {style:"pixel"}: bakes flat brightness bands per face (bands: 1-4, default 3)',
+	'   {style:"pixel"}: bakes flat brightness bands per face (bands: 1-8, default 3)',
 	'   between the top-light and bottom-dark extremes, checkerboard-dithers band',
 	'   boundaries, and SKIPS the mottle + blur that would smear the pixel grid. Use',
 	'   bands:1 for pure flat fills; hard parts (*_cap/_base) skip the dither. Paint',
@@ -2481,7 +2498,7 @@ const commands = {
 		const shape = (p.shape || 'crystal').toLowerCase();
 		const size = num3(p.size, [8, 8, 8]);
 		const from = num3(p.from, [-size[0] / 2, 0, -size[2] / 2]);
-		const prim = meshPrimitive(shape, size[0], size[1], size[2], p.segments);
+		const prim = meshPrimitive(shape, size[0], size[1], size[2], p.segments, p.sweep);
 		const tex = p.texture ? findTexture(p.texture) : (Texture.getDefault ? Texture.getDefault() : Texture.all[0]);
 		const uvRect = Array.isArray(p.uv) ? p.uv : [0, 0, Project.texture_width, Project.texture_height];
 		Undo.initEdit({ outliner: true, elements: [] });
@@ -3237,7 +3254,7 @@ const commands = {
 				return {
 					rect: [rect.x, rect.y, rect.w, rect.h],
 					cubes: names.slice(0, 4),
-					unique: dom.length + (local.has('a0') ? 1 : 0),
+					unique: dom.length,
 					quantized_unique: localQuant.size,
 					dominant: dom.slice(0, 4).map(([k, n]) => ({
 						color: k === 'a0' ? 'transparent' : '#' + k.toString(16).padStart(6, '0'),
@@ -3246,12 +3263,16 @@ const commands = {
 				};
 			}).sort((a2, b2) => b2.unique - a2.unique).slice(0, 60);
 		}
-		const uniqueTotal = [...total.keys()].filter((k) => k !== 'a0').length + (total.has('a0') ? 1 : 0);
+		// Unique COLOURS only — transparency is already reported separately
+		// (transparent_pixels) and counting it as a colour muddies the mush
+		// signal (a mostly-empty sheet is not a colourful one).
+		const uniqueTotal = [...total.keys()].filter((k) => k !== 'a0').length;
+		const quantUnique = [...quantTotal].filter((k) => k !== 'a0').length;
 		return {
 			texture: tex.name || tex.uuid,
 			size: [w, h],
 			unique_total: uniqueTotal,
-			quantized_unique_total: quantTotal.size,
+			quantized_unique_total: quantUnique,
 			transparent_pixels: transparent,
 			top_colors: topColors,
 			islands,
@@ -3465,6 +3486,7 @@ const commands = {
 					if (glow) return;                                   // cores keep their bright gradient
 					const top = mul * (1 + topLight), bot = mul * (1 - bottomDark);
 					const bh = Math.max(1, Math.round(r.h / bands));
+					let prevF = null;
 					for (let row = 0; row < bands; row++) {
 						const t = bands === 1 ? 0.5 : row / (bands - 1);
 						const f = top + (bot - top) * t;
@@ -3473,13 +3495,17 @@ const commands = {
 						if (hgt <= 0) continue;
 						ctx.fillStyle = shadeHex(base, f);
 						ctx.fillRect(r.x, y0, r.w, hgt);
-						// checkerboard dither across each band boundary pairs the
-						// two tones without adding new colours (off for hard parts)
+						// checkerboard dither across each band boundary: alternate
+						// pixels of the boundary row take the PREVIOUS (lighter)
+						// band's tone — pairs the two tones without adding new
+						// colours (off for hard parts)
 						if (!hard && row > 0 && r.w >= 4 && hgt >= 2) {
+							ctx.fillStyle = shadeHex(base, prevF);
 							for (let dx = 0; dx < r.w; dx++) {
 								if ((dx + row) % 2 === 0) ctx.fillRect(r.x + dx, y0, 1, 1);
 							}
 						}
+						prevF = f;
 					}
 				});
 			} else {
