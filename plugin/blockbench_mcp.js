@@ -1076,6 +1076,265 @@ function describeImageDelta(refDataUrl, shotDataUrl) {
 	};
 }
 
+// ---- silhouette metrics (compare v2) ---------------------------------------
+
+let zlibModule = null;
+/** Lazy zlib for PNG IDAT inflate (mirrors getNet: lazy require, explicit error). */
+function getZlib() {
+	if (zlibModule) return zlibModule;
+	zlibModule = require('zlib'); // may show a permission dialog or throw if denied
+	if (!zlibModule || !zlibModule.inflateSync) {
+		throw new Error('zlib module was denied. Allow it so compare_views can measure silhouettes.');
+	}
+	return zlibModule;
+}
+
+/**
+ * Decode a PNG (8-bit, non-interlaced) into {width, height, data:Uint8Array RGBA}.
+ * Covers the color types Blockbench and reference tools emit (0 gray, 2 RGB,
+ * 3 palette, 4 gray+alpha, 6 RGBA). Returns null for anything unsupported
+ * (callers fall back to byte deltas); never throws.
+ */
+function decodePngRgba(buf) {
+	try {
+		if (!buf || buf.length < 57 || !parsePngDimensions(buf)) return null;
+		const u32 = (o) => buf.readUInt32BE(o);
+		const idat = [];
+		let palette = null, trns = null;
+		let width = 0, height = 0, bitDepth = 0, colorType = 0, interlace = 0;
+		let off = 8;
+		while (off + 8 <= buf.length) {
+			const len = u32(off);
+			const type = buf.toString('ascii', off + 4, off + 8);
+			const ds = off + 8;
+			if (type === 'IHDR') {
+				width = u32(ds); height = u32(ds + 4);
+				bitDepth = buf[ds + 8]; colorType = buf[ds + 9]; interlace = buf[ds + 12];
+			} else if (type === 'PLTE') {
+				palette = buf.slice(ds, ds + len);
+			} else if (type === 'tRNS') {
+				trns = buf.slice(ds, ds + len);
+			} else if (type === 'IDAT') {
+				idat.push(buf.slice(ds, ds + len));
+			} else if (type === 'IEND') {
+				break;
+			}
+			off = ds + len + 4; // skip CRC
+		}
+		const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
+		if (!width || !height || !channels || interlace !== 0 || bitDepth !== 8) return null;
+		const raw = getZlib().inflateSync(Buffer.concat(idat));
+		const stride = width * channels;
+		if (raw.length < (stride + 1) * height) return null;
+		const out = new Uint8Array(width * height * 4);
+		const row = Buffer.alloc(stride);
+		const prev = Buffer.alloc(stride);
+		let p = 0;
+		for (let y = 0; y < height; y++) {
+			const ft = raw[p++];
+			for (let i = 0; i < stride; i++) row[i] = raw[p++];
+			if (ft === 1) {
+				for (let i = channels; i < stride; i++) row[i] = (row[i] + row[i - channels]) & 0xff;
+			} else if (ft === 2) {
+				for (let i = 0; i < stride; i++) row[i] = (row[i] + prev[i]) & 0xff;
+			} else if (ft === 3) {
+				for (let i = 0; i < stride; i++) {
+					const a = i >= channels ? row[i - channels] : 0;
+					row[i] = (row[i] + ((a + prev[i]) >> 1)) & 0xff;
+				}
+			} else if (ft === 4) {
+				for (let i = 0; i < stride; i++) {
+					const a = i >= channels ? row[i - channels] : 0;
+					const b = prev[i];
+					const c = i >= channels ? prev[i - channels] : 0;
+					const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+					row[i] = (row[i] + ((pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c))) & 0xff;
+				}
+			} else if (ft !== 0) {
+				return null;
+			}
+			for (let x = 0; x < width; x++) {
+				const o = (y * width + x) * 4;
+				if (colorType === 6) {
+					out[o] = row[x * 4]; out[o + 1] = row[x * 4 + 1]; out[o + 2] = row[x * 4 + 2]; out[o + 3] = row[x * 4 + 3];
+				} else if (colorType === 2) {
+					out[o] = row[x * 3]; out[o + 1] = row[x * 3 + 1]; out[o + 2] = row[x * 3 + 2]; out[o + 3] = 255;
+				} else if (colorType === 0) {
+					out[o] = out[o + 1] = out[o + 2] = row[x]; out[o + 3] = 255;
+				} else if (colorType === 4) {
+					out[o] = out[o + 1] = out[o + 2] = row[x * 2]; out[o + 3] = row[x * 2 + 1];
+				} else {
+					const idx = row[x];
+					if (palette && idx * 3 + 2 < palette.length) {
+						out[o] = palette[idx * 3]; out[o + 1] = palette[idx * 3 + 1]; out[o + 2] = palette[idx * 3 + 2];
+					}
+					out[o + 3] = (trns && idx < trns.length) ? trns[idx] : 255;
+				}
+			}
+			prev.set(row);
+		}
+		return { width, height, data: out };
+	} catch (e) {
+		return null;
+	}
+}
+
+/**
+ * Build a boolean silhouette mask from decoded RGBA pixels. Alpha keying
+ * first (bridge shots render on transparent backgrounds); when the image is
+ * effectively opaque, corner keying (four corners must agree on a backdrop
+ * color — product photos on flat backgrounds); when neither yields a usable
+ * mask, returns {mask: null} and the caller falls back to byte deltas.
+ */
+function buildSilhouetteMask(img, threshold) {
+	const w = img.width, h = img.height, data = img.data;
+	const total = w * h;
+	const mask = new Uint8Array(total);
+	let hit = 0;
+	for (let i = 0; i < total; i++) {
+		if (data[i * 4 + 3] >= threshold) { mask[i] = 1; hit++; }
+	}
+	const coverage = hit / total;
+	if (coverage >= 0.01 && coverage <= 0.99) return { mask, method: 'alpha', coverage };
+	if (coverage > 0.99) {
+		// Opaque: corner keying. Corners must agree within tolerance, else no mask.
+		const px = (x, y) => { const o = (y * w + x) * 4; return [data[o], data[o + 1], data[o + 2]]; };
+		const c00 = px(0, 0), c10 = px(w - 1, 0), c01 = px(0, h - 1), c11 = px(w - 1, h - 1);
+		const dist = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+		if (dist(c00, c10) <= 48 && dist(c00, c01) <= 48 && dist(c00, c11) <= 48) {
+			const bg = [
+				(c00[0] + c10[0] + c01[0] + c11[0]) >> 2,
+				(c00[1] + c10[1] + c01[1] + c11[1]) >> 2,
+				(c00[2] + c10[2] + c01[2] + c11[2]) >> 2,
+			];
+			mask.fill(0);
+			let hit2 = 0;
+			for (let i = 0; i < total; i++) {
+				const d = Math.abs(data[i * 4] - bg[0]) + Math.abs(data[i * 4 + 1] - bg[1]) + Math.abs(data[i * 4 + 2] - bg[2]);
+				if (d > 96) { mask[i] = 1; hit2++; }
+			}
+			const cov2 = hit2 / total;
+			if (cov2 >= 0.005 && cov2 <= 0.995) return { mask, method: 'corners', coverage: cov2 };
+		}
+	}
+	return { mask: null, method: 'alpha', coverage: 0 };
+}
+
+/** Nearest-neighbor scale of a mask into new dimensions (returns same array when equal). */
+function scaleMask(mask, sw, sh, dw, dh) {
+	if (sw === dw && sh === dh) return mask;
+	const out = new Uint8Array(dw * dh);
+	for (let y = 0; y < dh; y++) {
+		const sy = Math.min(sh - 1, (y * sh / dh) | 0);
+		const srow = sy * sw, drow = y * dw;
+		for (let x = 0; x < dw; x++) out[drow + x] = mask[srow + Math.min(sw - 1, (x * sw / dw) | 0)];
+	}
+	return out;
+}
+
+/**
+ * Silhouette metrics between two masks of identical dimensions. IoU overall
+ * plus per-region (3x3 grid over the combined bounding box, empty∩empty
+ * counts as 1), aspect ratios from per-mask bboxes, and centroids in px and
+ * — when the blueprint scale is known — model units.
+ */
+function silhouetteMetrics(refMask, shotMask, w, h, pxPerUnit) {
+	let inter = 0, refArea = 0, shotArea = 0;
+	let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+	let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+	let rcx = 0, rcy = 0, scx = 0, scy = 0;
+	for (let y = 0; y < h; y++) {
+		const rowOff = y * w;
+		for (let x = 0; x < w; x++) {
+			const i = rowOff + x;
+			const r = refMask[i], s = shotMask[i];
+			if (r) {
+				refArea++; rcx += x; rcy += y;
+				if (x < rx0) rx0 = x; if (x > rx1) rx1 = x;
+				if (y < ry0) ry0 = y; if (y > ry1) ry1 = y;
+			}
+			if (s) {
+				shotArea++; scx += x; scy += y;
+				if (x < sx0) sx0 = x; if (x > sx1) sx1 = x;
+				if (y < sy0) sy0 = y; if (y > sy1) sy1 = y;
+			}
+			if (r && s) inter++;
+		}
+	}
+	const union = refArea + shotArea - inter;
+	const iou = union > 0 ? inter / union : 1;
+	const regionIou = () => {
+		const bx0 = Math.min(rx0, sx0), by0 = Math.min(ry0, sy0);
+		const bx1 = Math.max(rx1, sx1), by1 = Math.max(ry1, sy1);
+		const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+		const regions = [];
+		for (let gy = 0; gy < 3; gy++) {
+			for (let gx = 0; gx < 3; gx++) {
+				const cx0 = bx0 + Math.floor(gx * bw / 3), cx1 = bx0 + Math.ceil((gx + 1) * bw / 3);
+				const cy0 = by0 + Math.floor(gy * bh / 3), cy1 = by0 + Math.ceil((gy + 1) * bh / 3);
+				let ri = 0, ru = 0;
+				for (let y = cy0; y < cy1 && y <= by1; y++) {
+					for (let x = cx0; x < cx1 && x <= bx1; x++) {
+						const r = refMask[y * w + x], s = shotMask[y * w + x];
+						if (r && s) ri++;
+						if (r || s) ru++;
+					}
+				}
+				regions.push(ru > 0 ? ri / ru : 1);
+			}
+		}
+		return regions;
+	};
+	const aspectOf = (x0, y0, x1, y1) => {
+		const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+		return bh > 0 ? bw / bh : 0;
+	};
+	const u = (v) => (pxPerUnit && pxPerUnit > 0 ? +(v / pxPerUnit).toFixed(3) : null);
+	const round2 = (v) => Math.round(v * 100) / 100;
+	const aspectRef = aspectOf(rx0, ry0, rx1, ry1);
+	const aspectShot = aspectOf(sx0, sy0, sx1, sy1);
+	const refCentroid = refArea ? [rcx / refArea, rcy / refArea] : null;
+	const shotCentroid = shotArea ? [scx / shotArea, scy / shotArea] : null;
+	return {
+		iou: +iou.toFixed(4),
+		intersection: inter,
+		union,
+		ref_area: refArea,
+		shot_area: shotArea,
+		ref_area_units: u(Math.sqrt(refArea)),
+		shot_area_units: u(Math.sqrt(shotArea)),
+		ref_bbox: refArea ? [rx0, ry0, rx1, ry1] : null,
+		shot_bbox: shotArea ? [sx0, sy0, sx1, sy1] : null,
+		aspect_ref: round2(aspectRef),
+		aspect_shot: round2(aspectShot),
+		aspect_delta_pct: aspectRef > 0 ? Math.round((aspectShot - aspectRef) / aspectRef * 100) : null,
+		centroid_ref_px: refCentroid ? [Math.round(refCentroid[0]), Math.round(refCentroid[1])] : null,
+		centroid_shot_px: shotCentroid ? [Math.round(shotCentroid[0]), Math.round(shotCentroid[1])] : null,
+		centroid_delta_px: (refCentroid && shotCentroid)
+			? [Math.round(shotCentroid[0] - refCentroid[0]), Math.round(shotCentroid[1] - refCentroid[1])]
+			: null,
+		centroid_delta_units: (refCentroid && shotCentroid && pxPerUnit > 0)
+			? [u(shotCentroid[0] - refCentroid[0]), u(shotCentroid[1] - refCentroid[1])]
+			: null,
+		regions: regionIou().map(round2),
+	};
+}
+
+/** Format a metrics object into one compact, readable line. */
+function describeMetrics(m) {
+	if (!m) return '';
+	const parts = [`iou ${m.iou}`];
+	parts.push(`aspect ${m.aspect_ref}→${m.aspect_shot} (${m.aspect_delta_pct >= 0 ? '+' : ''}${m.aspect_delta_pct}%)`);
+	if (m.centroid_delta_units) {
+		parts.push(`centroid Δ[${m.centroid_delta_units[0]},${m.centroid_delta_units[1]}]u`);
+	} else if (m.centroid_delta_px) {
+		parts.push(`centroid Δ[${m.centroid_delta_px[0]},${m.centroid_delta_px[1]}]px`);
+	}
+	const worst = Math.min.apply(null, m.regions);
+	parts.push(`weakest region ${worst}`);
+	return parts.join(', ');
+}
+
 /**
  * Reference-image pinning mechanics (ticket #25 service layer). One image
  * per blueprint view, keyed by camera identity (preset id or explicit
@@ -3854,8 +4113,32 @@ const commands = {
 	// the stored reference. Returns the stored state so clients can read
 	// back what is pinned: {view, pinned:true, mime, bytes} or {view,
 	// pinned:false} after unpin.
+	// `source: "@capture"` (compare v2) snapshots the CURRENT preview
+	// render under the given view key — the save-what-I-see-now half of
+	// the loop. Camera state is never moved; capture is async like the
+	// screenshot paths. Pin under the same view you will later compare.
 	set_reference_image(p) {
 		requireProject();
+		if (p && p.source === '@capture') {
+			const preview = Preview.selected;
+			const bp = p.view ? normalizeBlueprintView(typeof p.view === 'string' ? p.view : { view: p.view }, {}) : null;
+			const key = (bp && bp.position && bp.target)
+				? referenceViewKey({ position: bp.position, target: bp.target })
+				: (bp ? referenceViewKey(p.view)
+					: referenceViewKey({
+						position: [preview.camera.position.x, preview.camera.position.y, preview.camera.position.z],
+						target: [preview.controls.target.x, preview.controls.target.y, preview.controls.target.z],
+					}));
+			return new Promise((resolve) => {
+				Screencam.screenshotPreview(preview, {}, (dataUrl) => {
+					const bits = dataUrlToBytes(dataUrl);
+					const ref = toReferenceImage(bits ? bits.bytes : null, ' (@capture)');
+					const store = referenceStore();
+					store[key] = ref;
+					resolve({ view: key, pinned: true, mime: ref.mime, bytes: ref.bytes, captured: true });
+				});
+			});
+		}
 		const key = referenceViewKey(p && p.view);
 		const ref = resolveReferenceSource(p ? p.source : undefined);
 		const store = referenceStore();
@@ -3886,6 +4169,40 @@ const commands = {
 		if (!p || !Array.isArray(p.views) || !p.views.length) {
 			throw new Error('Field "views" must be a non-empty array of blueprint views.');
 		}
+		const defaultThreshold = (p && typeof p.threshold === 'number') ? p.threshold : 128;
+		if (!(defaultThreshold >= 1 && defaultThreshold <= 255)) {
+			throw new Error('Field "threshold" must be an integer 1-255 (alpha cutoff for the silhouette mask).');
+		}
+		const gateFor = (v) => {
+			let gate = (p && typeof p.gate === 'string') ? p.gate : undefined;
+			if (v && typeof v === 'object' && !Array.isArray(v)) {
+				if (typeof v.gate === 'string') gate = v.gate;
+				if (v.gate === null) gate = undefined;
+			}
+			if (gate === undefined || gate === null) return { mode: 'default' };
+			const spec = { iou: 0.85, area: 0.25, aspect: 0.1, centroid: 0.15 };
+			const seen = { iou: false, area: false, aspect: false, centroid: false };
+			for (const raw of String(gate).split(',')) {
+				const tok = raw.trim().replace(/^@/, '');
+				if (!tok) continue;
+				const m = /^(iou|area|aspect|centroid)(?:<=(\d*\.?\d+))?$/.exec(tok);
+				if (!m) return { error: 'Field "gate" must be a comma list of iou<=N, area<=N, aspect<=N, centroid<=N.' };
+				if (seen[m[1]]) return { error: `Field "gate" lists ${m[1]} twice.` };
+				seen[m[1]] = true;
+				if (m[2] !== undefined) {
+					const num = Number(m[2]);
+					if (!isFinite(num)) return { error: `Field "gate" ${m[1]} threshold must be a finite number.` };
+					spec[m[1]] = num;
+				} else {
+					spec[m[1]] = 0; // bare key = disable that check
+				}
+			}
+			if (!(spec.iou > 0 && spec.iou <= 1)) return { error: 'Field "gate" iou threshold must be within (0, 1].' };
+			for (const k of ['area', 'aspect', 'centroid']) {
+				if (!(spec[k] >= 0)) return { error: `Field "gate" ${k} threshold must be >= 0.` };
+			}
+			return { mode: 'custom', spec };
+		};
 		const preview = Preview.selected;
 		const defaults = {
 			ortho: p && typeof p.ortho === 'boolean' ? p.ortho : undefined,
@@ -3899,13 +4216,22 @@ const commands = {
 		if (p && p.width) options.width = p.width;
 		if (p && p.height) options.height = p.height;
 		const store = referenceStore();
-		const plan = p.views.map((v) => {
+		const plan = p.views.map((v, vi) => {
 			const bp = normalizeBlueprintView(v, defaults);
 			if (bp.px_per_unit !== undefined && !(bp.px_per_unit > 0)) {
 				throw new Error('Field "px_per_unit" must be a positive number.');
 			}
 			const key = referenceViewKey(v);
-			return { item: v, key, ref: store[key] || null, shot: null };
+			let threshold = defaultThreshold;
+			if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.threshold === 'number') {
+				if (!(v.threshold >= 1 && v.threshold <= 255)) {
+					throw new Error(`Field "threshold" on views[${vi}] must be an integer 1-255.`);
+				}
+				threshold = v.threshold;
+			}
+			const gate = gateFor(v);
+			if (gate.error) throw new Error(gate.error);
+			return { item: v, key, ref: store[key] || null, shot: null, threshold, gate, bp };
 		});
 		return (async () => {
 			const capturable = plan.filter((e) => e.ref);
@@ -3924,10 +4250,65 @@ const commands = {
 					};
 				}
 				const d = describeImageDelta(e.ref.data_url, e.shot.data_url);
+				// ---- silhouette metrics (compare v2): real deltas, not just byte equality.
+				let metrics = null, verdict = null, method = null;
+				if (!d.match) {
+					const refImg = decodePngRgba(dataUrlToBytes(e.ref.data_url)?.bytes || null);
+					const shotImg = decodePngRgba(dataUrlToBytes(e.shot.data_url)?.bytes || null);
+					if (refImg && shotImg) {
+						const refM = buildSilhouetteMask(refImg, e.threshold);
+						const shotM = buildSilhouetteMask(shotImg, e.threshold);
+						if (refM.mask && shotM.mask) {
+							method = refM.method === 'corners' && shotM.method === 'corners'
+								? 'corners'
+								: (refM.method === shotM.method ? refM.method : 'alpha+corners');
+							const dw = Math.min(refImg.width, shotImg.width);
+							const dh = Math.min(refImg.height, shotImg.height);
+							const refMask = scaleMask(refM.mask, refImg.width, refImg.height, dw, dh);
+							const shotMask = scaleMask(shotM.mask, shotImg.width, shotImg.height, dw, dh);
+							metrics = silhouetteMetrics(refMask, shotMask, dw, dh, e.bp.px_per_unit > 0 ? e.bp.px_per_unit : null);
+							// ---- verdict from gate (custom or defaults) ----
+							const spec = e.gate.mode === 'custom'
+								? e.gate.spec
+								: { iou: 0.85, area: 0.25, aspect: 0.1, centroid: 0.15 };
+							const checks = [];
+							checks.push({ name: 'iou', pass: metrics.iou >= spec.iou, threshold: spec.iou, detail: `IoU ${metrics.iou} vs required ${spec.iou}` });
+							if (metrics.ref_area > 0) {
+								const ratio = metrics.shot_area / metrics.ref_area;
+								metrics.area_ratio = +ratio.toFixed(3);
+								checks.push({ name: 'area', pass: Math.abs(1 - ratio) <= spec.area, threshold: spec.area, detail: `shot is ${ratio < 1 ? `${(100 - ratio * 100).toFixed(0)}% smaller` : `${(ratio * 100 - 100).toFixed(0)}% larger`} than reference (area ratio ${metrics.area_ratio}, allowed ±${(spec.area * 100).toFixed(0)}%)` });
+							}
+							if (metrics.aspect_ref > 0 && metrics.aspect_delta_pct !== null) {
+								checks.push({ name: 'aspect', pass: Math.abs(metrics.aspect_delta_pct) / 100 <= spec.aspect, threshold: spec.aspect, detail: `aspect ${metrics.aspect_ref}→${metrics.aspect_shot} (${metrics.aspect_delta_pct >= 0 ? '+' : ''}${metrics.aspect_delta_pct}%, allowed ±${(spec.aspect * 100).toFixed(0)}%)` });
+							}
+							if (metrics.centroid_delta_units) {
+								const du = Math.hypot(metrics.centroid_delta_units[0], metrics.centroid_delta_units[1]);
+								metrics.centroid_shift_units = +du.toFixed(3);
+								checks.push({ name: 'centroid', pass: du <= spec.centroid, threshold: spec.centroid, detail: `centroid shifted ${du.toFixed(2)} model units (allowed ${spec.centroid})` });
+							} else if (metrics.centroid_delta_px) {
+								const dp = Math.hypot(metrics.centroid_delta_px[0], metrics.centroid_delta_px[1]);
+								const dim = Math.max(dw, dh);
+								const rel = dim > 0 ? dp / dim : 0;
+								metrics.centroid_shift_px = Math.round(dp);
+								checks.push({ name: 'centroid', pass: rel <= spec.centroid, threshold: spec.centroid, detail: `centroid shifted ${Math.round(dp)}px (${(rel * 100).toFixed(0)}% of frame, allowed ±${(spec.centroid * 100).toFixed(0)}%)` });
+							}
+							const failed = checks.filter((c) => !c.pass);
+							verdict = {
+								pass: failed.length === 0,
+								checks: checks.map((c) => ({ name: c.name, pass: c.pass, threshold: c.threshold, detail: c.detail })),
+								reasons: failed.map((c) => c.detail),
+							};
+						}
+					}
+				}
 				return {
 					view: e.key,
 					match: d.match,
 					compared: true,
+					identical: !!d.match,
+					method,
+					metrics,
+					verdict,
 					delta: d.delta,
 					reference: d.reference,
 					shot: Object.assign({}, d.shot, {
@@ -3938,11 +4319,15 @@ const commands = {
 					projection_restored: e.shot.projection_restored,
 				};
 			});
+			const withVerdict = comparisons.filter((c) => c.verdict);
 			return {
 				count: comparisons.length,
 				matched: comparisons.filter((c) => c.compared && c.match).length,
 				differed: comparisons.filter((c) => c.compared && !c.match).length,
 				missing: comparisons.filter((c) => !c.compared).map((c) => c.view),
+				metrics_passed: withVerdict.filter((c) => c.verdict.pass).length,
+				metrics_failed: withVerdict.filter((c) => !c.verdict.pass).length,
+				fallback_byte_only: comparisons.filter((c) => c.compared && !c.identical && !c.metrics).length,
 				projection_restored: comparisons.every((c) => c.projection_restored),
 				comparisons,
 			};

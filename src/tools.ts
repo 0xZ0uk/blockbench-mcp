@@ -875,15 +875,25 @@ export const tools: ToolDef[] = [
   {
     name: "compare_views",
     description:
-      "Compare the current model against pinned reference images and return structured delta text per view, so proportion drift becomes data instead of eyeballing screenshots. Reuses the exact screenshot_views camera semantics (preset id, {position,target}, or blueprint {view, ortho?, px_per_unit?, wireframe?} with call-level ortho/px_per_unit/wireframe defaults): pin with set_reference_image under the same view, then compare with the same camera + px_per_unit (and the same width/height) for a stable delta. Views with no pinned reference return a per-view error naming `view` while the other views still compare. Camera/projection state is restored afterward.",
+      "Compare the current model against pinned reference images and return structured delta text per view, so proportion drift becomes data instead of eyeballing screenshots. Reuses the exact screenshot_views camera semantics (preset id, {position,target}, or blueprint {view, ortho?, px_per_unit?, wireframe?} with call-level ortho/px_per_unit/wireframe defaults): pin with set_reference_image under the same view, then compare with the same camera + px_per_unit (and the same width/height) for a stable delta. When both images decode as PNGs with usable silhouettes (alpha keying for transparent shots, corner keying for flat-backdrop references), each compared view carries metrics — scale-normalized IoU, aspect-delta %, centroid shift (in model units when px_per_unit is pinned), 3x3 region IoUs, area ratio — and a pass/fail verdict against the `gate` thresholds (default iou<=0.85, area<=0.25, aspect<=0.1, centroid<=0.15). Byte equality (`match`) remains the deterministic identical signal; views with no pinned reference return a per-view error naming `view` while the other views still compare. Camera/projection state is restored afterward.",
     inputSchema: closedObj(
       {
         views: {
           type: "array",
           minItems: 1,
           description:
-            "Camera views to compare, in order. Same items as screenshot_views: a preset id string ('front','back','left','right','top','bottom','isometric_right_front','isometric_left_front'), a {position:[x,y,z], target:[x,y,z]} object, or a blueprint object {view, ortho?, px_per_unit?, wireframe?}. Required — there is no default set (nothing to compare without requested views).",
+            "Camera views to compare, in order. Same items as screenshot_views: a preset id string ('front','back','left','right','top','bottom','isometric_right_front','isometric_left_front'), a {position:[x,y,z], target:[x,y,z]} object, or a blueprint object {view, ortho?, px_per_unit?, wireframe?} (blueprint objects may also carry per-view `threshold` and `gate` overrides). Required — there is no default set (nothing to compare without requested views).",
           items: {},
+        },
+        threshold: {
+          type: "number",
+          description:
+            "Silhouette alpha cutoff, 1-255 (default 128): pixels with alpha >= threshold count as model. Raise it to shrink the mask away from anti-aliased edges. Per-view override allowed on blueprint objects.",
+        },
+        gate: {
+          type: "string",
+          description:
+            "Verdict thresholds as a comma list, e.g. 'iou<=0.9,area<=0.2,aspect<=0.05,centroid<=0.1'. Keys: iou (0-1, min IoU), area (fractional allowed size error), aspect (fractional allowed aspect error), centroid (allowed shift: model units when px_per_unit is pinned, else fraction of frame). Omitted keys keep their defaults; '@iou<=0.95' shorthand also accepted. Per-view override allowed on blueprint objects.",
         },
         width: { type: "number" },
         height: { type: "number" },
@@ -895,7 +905,7 @@ export const tools: ToolDef[] = [
         px_per_unit: {
           type: "number",
           description:
-            "Blueprint scale guarantee: positive pixels per model unit for every shot (per-view `px_per_unit` overrides). Same model + same value yields the same pixel extents, hence a stable delta.",
+            "Blueprint scale guarantee: positive pixels per model unit for every shot (per-view `px_per_unit` overrides). Same model + same value yields the same pixel extents — and with metrics on, centroid deltas come back in model units.",
         },
         wireframe: {
           type: "boolean",
@@ -908,24 +918,46 @@ export const tools: ToolDef[] = [
     handler: async (args) => {
       const res: any = await callBlockbench("compare_views", args);
       const summary =
-        `Compared ${res.count} view(s): ${res.matched} match, ${res.differed} differ` +
+        `Compared ${res.count} view(s): ${res.matched} identical, ${res.differed} differ` +
         `${res.missing?.length ? `, ${res.missing.length} missing reference` : ""}` +
+        ` — metrics: ${res.metrics_passed ?? 0} pass, ${res.metrics_failed ?? 0} fail` +
+        `${res.fallback_byte_only ? `, ${res.fallback_byte_only} byte-only` : ""}` +
         `${res.projection_restored === false ? " (WARNING: projection NOT restored)" : " (projection restored)"}`;
       const blocks: ContentBlock[] = [{ type: "text", text: summary }];
       for (const c of res.comparisons ?? []) {
-        blocks.push({
-          type: "text",
-          text: c.compared
-            ? `View ${c.view}: ${c.match ? "MATCH" : "DIFFER"} — ${c.delta}`
-            : `View ${c.view}: MISSING REFERENCE — ${c.error}`,
-        });
+        if (!c.compared) {
+          blocks.push({ type: "text", text: `View ${c.view}: MISSING REFERENCE — ${c.error}` });
+          continue;
+        }
+        if (c.identical) {
+          blocks.push({ type: "text", text: `View ${c.view}: IDENTICAL — ${c.delta}` });
+          continue;
+        }
+        const m = c.metrics;
+        const v = c.verdict;
+        if (m && v) {
+          const lines = [`View ${c.view}: ${v.pass ? "PASS" : "FAIL"} (iou ${m.iou}, method ${c.method ?? "bytes"})`];
+          for (const k of v.checks ?? []) {
+            lines.push(`  ${k.pass ? "PASS" : "FAIL"} ${k.name}: ${k.detail}`);
+          }
+          const regions = m.regions ?? [];
+          if (regions.length) {
+            lines.push(`  regions: ${regions.join(",")} (weakest ${Math.min(...regions)})`);
+          }
+          if (m.centroid_delta_units) {
+            lines.push(`  centroid shift: ${m.centroid_delta_units[0]},${m.centroid_delta_units[1]} model units`);
+          }
+          blocks.push({ type: "text", text: lines.join("\n") });
+        } else {
+          blocks.push({ type: "text", text: `View ${c.view}: DIFFER (byte compare only, no silhouette metrics) — ${c.delta}` });
+        }
       }
       return blocks;
     },
   },
   forward(
     "set_reference_image",
-    "Pin a reference image against a blueprint view so later passes can compare work against it with data instead of eyeballing screenshots (the pinning half of the reference-compare loop; compared with compare_views). `view` uses the same camera semantics as screenshot_views views: a preset id string ('front','back','left','right','top','bottom','isometric_right_front',...) or an explicit {position:[x,y,z], target:[x,y,z]}. `source` is an image file path (Blockbench desktop app) or an inline image ('data:image/...;base64,...' or raw base64); an empty string unpins the view. Pinning again replaces the stored reference. Returns the stored state so you can read back what is pinned: {view, pinned:true, mime, bytes} with the canonical view key, or {view, pinned:false} after unpin.",
+    "Pin a reference image against a blueprint view so later passes can compare work against it with data instead of eyeballing screenshots (the pinning half of the reference-compare loop; compared with compare_views). `view` uses the same camera semantics as screenshot_views views: a preset id string ('front','right','top','bottom','isometric_right_front',...) or an explicit {position:[x,y,z], target:[x,y,z]}. `source` is an image file path (Blockbench desktop app), an inline image ('data:image/...;base64,...' or raw base64), or the literal '@capture' to snapshot the CURRENT preview render under this view key (save-what-I-see-now — ideal for pinning a mid-iteration state you want to improve on, or a reference you have composed/cropped and loaded as an image first); an empty string unpins the view. Pinning again replaces the stored reference. Returns the stored state so you can read back what is pinned: {view, pinned:true, mime, bytes} with the canonical view key, or {view, pinned:false} after unpin. Compare under the SAME view + camera + px_per_unit for a stable, measurable delta.",
     closedObj(
       {
         view: {
